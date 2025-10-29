@@ -254,46 +254,105 @@ def start_app_and_test():
         except Exception as e:
             output += f"⚠️  Start command may have timed out, but app might still be starting: {str(e)}\n"
             yield output
-            # Continue anyway since the app should be starting in background
 
-        # Wait and check startup
-        output += "⏳ Waiting for app to start...\n"
+        # Continue anyway since the app should be starting in background
+
+        # Wait and stream startup logs in short chunks so we can detect readiness
+        output += "⏳ Waiting for app to start (streaming logs)...\n"
         yield output
-        import time
 
-        # Check multiple times for Java process
-        max_checks = 10
+        # We'll stream `app.log` in short chunks and after each chunk check for readiness.
+        # This allows the generator to "detach" the log streaming once the app is ready
+        # while leaving the Java process running in the sandbox.
+        run_output = []
+
+        def on_stdout(data):
+            # collect raw lines (without adding additional prefixes here)
+            run_output.append(str(data).rstrip('\n'))
+
+        def on_stderr(data):
+            run_output.append("[ERR] " + str(data).rstrip('\n'))
+
+        total_timeout = 20 * 60  # 20 minutes in seconds (user provided)
+        chunk_seconds = 4
+        elapsed = 0
+        last_index = 0
         process_found = False
         port_listening = False
         port_status = "Port 8080 not listening"
 
-        for i in range(max_checks):
-            output += f"Check {i+1}/{max_checks}...\n"
-            yield output
+        # Try to stream logs repeatedly in short chunks until readiness or timeout
+        while elapsed < total_timeout:
+            try:
+                # tail -n 0 -f prints only new lines appended after the command starts.
+                # Run in short chunks (sandbox enforces timeout) so we can poll readiness
+                # without reprinting the whole file each iteration.
+                sandbox.commands.run(
+                    "cd /home/user/spring-boot && tail -n 0 -f app.log",
+                    on_stdout=on_stdout,
+                    on_stderr=on_stderr,
+                    timeout=chunk_seconds + 1,
+                )
+            except Exception:
+                # expected when the remote command hits the timeout; continue
+                pass
+
+            # Stream any newly collected lines to the UI
+            for line in run_output[last_index:]:
+                output += line + "\n"
+                yield output
+            last_index = len(run_output)
+
+            # Check any newly streamed lines for common readiness messages
+            new_lines = run_output[last_index:]
+            for l in new_lines:
+                lower = l.lower()
+                # common Spring Boot readiness messages
+                if "started application" in lower or "tomcat started" in lower or "started" in lower and "seconds" in lower:
+                    output += "✅ Detected application startup in logs\n"
+                    yield output
+                    port_listening = True
+                    break
 
             # Check if Java process is running
-            ps_check = sandbox.commands.run("ps aux | grep java | grep -v grep", timeout=5)
-            java_processes = ps_check.stdout.strip()
+            try:
+                ps_check = sandbox.commands.run("ps aux | grep java | grep -v grep || true", timeout=5)
+                java_processes = ps_check.stdout.strip()
+            except Exception:
+                java_processes = ""
+
             if java_processes:
                 output += "✅ Java process found running\n"
+                yield output
                 process_found = True
 
                 # Now check if port 8080 is listening
-                port_check = sandbox.commands.run("netstat -tlnp 2>/dev/null | grep :8080 || ss -tlnp | grep :8080 || echo 'Port 8080 not listening'", timeout=5)
-                port_status = port_check.stdout.strip()
-                if "8080" in port_status and "listening" in port_status.lower():
+                try:
+                    port_check = sandbox.commands.run(
+                        "netstat -tlnp 2>/dev/null | grep :8080 || ss -tlnp | grep :8080 || echo 'Port 8080 not listening'",
+                        timeout=5,
+                    )
+                    port_status = port_check.stdout.strip()
+                except Exception:
+                    port_status = "Port check command failed"
+
+                # Some systems show LISTEN or listening; check for 'listen' substring for robustness
+                if "8080" in port_status and "listen" in port_status.lower():
                     output += "✅ Port 8080 is now listening\n"
+                    yield output
                     port_listening = True
                     break
                 else:
-                    output += "⏳ Port 8080 not ready yet, waiting...\n"
-                    time.sleep(2)
+                    output += "⏳ Port 8080 not ready yet, continuing to stream logs...\n"
+                    yield output
             else:
-                output += "⏳ No Java process yet, waiting...\n"
-                time.sleep(3)
+                output += "⏳ No Java process yet, continuing to stream logs...\n"
+                yield output
+
+            elapsed += chunk_seconds
 
         if not process_found:
-            output += "❌ Java process not found after all checks\n"
+            output += "❌ Java process not found after streaming period\n"
             yield output
         elif not port_listening:
             output += f"⚠️  Java process found but port 8080 not listening (status: {port_status})\n"
@@ -322,6 +381,7 @@ def start_app_and_test():
 
                 # Try curl with more verbose output
                 try:
+                    output += "📡 E2B Hostname: " + sandbox.get_host(port=8080) + "\n"
                     curl_result = sandbox.commands.run("curl -v -m 10 http://localhost:8080/ 2>&1 || echo 'CURL_FAILED'", timeout=15)
                     output += f"Curl output: {curl_result.stdout}\n"
                     yield output

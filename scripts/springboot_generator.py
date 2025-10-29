@@ -6,11 +6,7 @@ Following the official Spring Boot getting started tutorial.
 """
 
 import os
-import zipfile
-import io
-import requests
 from e2b import Sandbox
-from typing import List, Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -215,7 +211,7 @@ def step_6_start_application(sandbox):
 
     # Start the app - use very short timeout since it should return immediately with &
     try:
-        start_result = sandbox.commands.run(start_cmd, timeout=2)
+        sandbox.commands.run(start_cmd, timeout=2)
         print("✅ Start command issued successfully")
         return True
     except Exception as e:
@@ -282,7 +278,7 @@ def step_9_cleanup(sandbox):
     print("\n🔄 Step 9: Cleanup")
 
     if sandbox:
-        sandbox.kill()
+        # sandbox.kill()
         print("✅ Sandbox killed")
 
 def run_spring_boot_in_sandbox():
@@ -327,6 +323,14 @@ def run_spring_boot_in_sandbox():
         print("\n🎉 Spring Boot application setup completed!")
         print("📍 Application should be accessible at: http://localhost:8080")
         print("🔗 Hello World endpoint: http://localhost:8080/")
+
+        # Display sandbox host for external access
+        try:
+            host = sandbox.get_host(port=8080)
+            print(f"🌐 Sandbox host: {host}")
+            print(f"🔗 External access: http://{host}/")
+        except Exception as e:
+            print(f"⚠️  Could not get sandbox host: {e}")
 
         if process_found and endpoint_success:
             print("✅ All steps completed successfully!")
