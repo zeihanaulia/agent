@@ -18,6 +18,9 @@ import time
 import gradio as gr
 from e2b import Sandbox
 
+# Global sandbox used for preview runner (persist across runs until stopped)
+PREVIEW_SANDBOX = None
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -418,6 +421,144 @@ def start_app_and_test():
             yield output
 
 
+def run_app_and_preview():
+    """Generator to start the app in a persistent sandbox for manual preview.
+
+    Differences from `start_app_and_test`:
+    - Sandbox is kept alive after the function returns and stored in `PREVIEW_SANDBOX`.
+    - Sandbox is only killed when the user clicks the Stop preview button (stop_preview).
+    """
+    global PREVIEW_SANDBOX
+
+    output = "🚀 Starting Spring Boot preview sandbox...\n"
+    # show a small loading placeholder immediately so the preview area appears
+    loading_html = "<div style='padding:12px;font-style:italic;color:#666;'>Preview starting…</div>"
+    # first yields return (logs, preview_html)
+    yield (output, gr.update(value=loading_html, visible=True))
+
+    # Load API key
+    api_key = os.getenv('E2B_API_KEY')
+    if not api_key:
+        output += "❌ E2B_API_KEY not found in environment variables\n"
+        yield (output, gr.update(value="", visible=False))
+        return
+
+    sandbox = PREVIEW_SANDBOX
+    created_here = False
+    try:
+        if sandbox is None:
+            output += "🔧 Creating preview sandbox...\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+            sandbox = Sandbox.create(template="springboot-dev", api_key=api_key)
+            created_here = True
+            output += "✅ Preview sandbox created\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+        else:
+            output += "ℹ️ Reusing existing preview sandbox\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+
+        # Recreate project and build
+        output += "📁 Uploading project files...\n"
+        yield (output, gr.update(value=loading_html, visible=True))
+        sandbox.commands.run("mkdir -p /home/user/spring-boot/src/main/java/com/example/springboot")
+
+        pom_content = load_file("pom.xml")
+        app_content = load_file("src/main/java/com/example/springboot/Application.java")
+        controller_content = load_file("src/main/java/com/example/springboot/HelloController.java")
+
+        sandbox.files.write("/home/user/spring-boot/pom.xml", pom_content)
+        sandbox.files.write("/home/user/spring-boot/src/main/java/com/example/springboot/Application.java", app_content)
+        sandbox.files.write("/home/user/spring-boot/src/main/java/com/example/springboot/HelloController.java", controller_content)
+
+        # Build quietly
+        output += "🔨 Building application (preview)...\n"
+        yield (output, gr.update(value=loading_html, visible=True))
+        build_result = sandbox.commands.run("cd /home/user/spring-boot && mvn clean package -DskipTests -q")
+        if build_result.exit_code != 0:
+            output += "❌ Build failed, cannot start preview app\n"
+            yield (output, gr.update(value="", visible=False))
+            # keep sandbox for debugging
+            PREVIEW_SANDBOX = sandbox
+            return
+
+        output += "✅ Build successful\n"
+        yield (output, gr.update(value=loading_html, visible=True))
+
+        # Start the app in background
+        jar_name = "target/spring-boot-0.0.1-SNAPSHOT.jar"
+        start_cmd = f"cd /home/user/spring-boot && nohup java -jar {jar_name} > app.log 2>&1 & echo $!"
+        output += f"🏃 Starting app: {start_cmd}\n"
+        yield (output, gr.update(value=loading_html, visible=True))
+
+        try:
+            start_result = sandbox.commands.run(start_cmd, timeout=10)
+            pid = start_result.stdout.strip()
+            output += f"✅ Start command issued, PID: {pid}\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+        except Exception as e:
+            output += f"⚠️ Start command may have timed out or failed: {e}\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+
+        # Stream a short amount of logs so the user can see startup and the E2B host
+        try:
+            tail_result = sandbox.commands.run("cd /home/user/spring-boot && tail -n 20 app.log", timeout=10)
+            output += f"Recent logs:\n{tail_result.stdout}\n"
+            yield (output, gr.update(value=loading_html, visible=True))
+        except Exception:
+            pass
+
+        # Show the E2B host so user can open in browser
+        html_preview = ""
+
+        try:
+            host = sandbox.get_host(port=8080)
+            output += "📡 E2B Hostname: " + host + "\n"
+            # build public url (ensure protocol)
+            public_url = host
+            if not public_url.startswith("http://") and not public_url.startswith("https://"):
+                public_url = f"http://{public_url}"
+
+            # build iframe HTML preview — force white background so content is readable in dark mode
+            html_preview = f"""\n<div style='border:1px solid #ddd;width:100%;height:600px;background:#ffffff;color:#000;'>\n  <iframe src=\"{public_url}\" width=\"100%\" height=\"100%\" frameborder=\"0\" style=\"background:#ffffff;color:#000;\"></iframe>\n</div>\n<p style='color:#000'><strong>External link:</strong> <a href=\"{public_url}\" target=\"_blank\">{public_url}</a></p>\n"""
+
+            output += f"Preview available at: {public_url}\n"
+            # yield logs plus an update to show preview HTML
+            PREVIEW_SANDBOX = sandbox
+            yield (output, gr.update(value=html_preview, visible=True))
+        except Exception as e:
+            output += f"⚠️ Could not get preview host: {e}\n"
+            PREVIEW_SANDBOX = sandbox
+            yield (output, gr.update(value="", visible=False))
+
+    except Exception as e:
+        output += f"❌ Preview error: {e}\n"
+        # hide preview on error
+        PREVIEW_SANDBOX = sandbox
+        yield (output, gr.update(value="", visible=False))
+    # intentionally DO NOT kill the sandbox here; user will stop it manually
+
+
+def stop_preview():
+    """Generator to stop the persistent preview sandbox started by run_app_and_preview."""
+    global PREVIEW_SANDBOX
+    output = "🛑 Stopping preview sandbox...\n"
+    # second output clears the preview HTML
+    preview_val = ""
+    yield (output, preview_val)
+    if PREVIEW_SANDBOX:
+        try:
+            PREVIEW_SANDBOX.kill()
+            output += "✅ Preview sandbox terminated\n"
+            PREVIEW_SANDBOX = None
+            yield (output, gr.update(value="", visible=False))
+        except Exception as e:
+            output += f"❌ Failed to stop preview sandbox: {e}\n"
+            yield (output, gr.update(value="", visible=False))
+    else:
+        output += "ℹ️ No preview sandbox to stop\n"
+        yield (output, gr.update(value="", visible=False))
+
+
 def make_demo():
     files = list_demo_files()
     first = files[0] if files else "pom.xml"
@@ -433,13 +574,24 @@ def make_demo():
             with gr.Column(scale=1):
                 run_btn = gr.Button("Run Build", variant="primary")
                 start_app_btn = gr.Button("Start App & Test", variant="secondary")
+                # Place preview control buttons side-by-side
+                with gr.Row():
+                    run_prev_btn = gr.Button("Run App & Preview", variant="primary")
+                    stop_prev_btn = gr.Button("Stop App", variant="stop")
                 logs = gr.Textbox(label="Build/Startup Output (streaming)", lines=25, interactive=False, show_copy_button=True)
                 gr.Markdown("**Build**: Runs `mvn clean package -DskipTests` in E2B sandbox\n**Start App & Test**: Builds, starts the app, and tests the endpoint")
+        # After the two-column row, place a full-width preview area so iframe is large
+        with gr.Row():
+            preview_html = gr.HTML(value="", visible=False)
 
+        # Wire up events while still inside the Blocks context (now preview_html is defined)
         file_dropdown.change(fn=update_code, inputs=file_dropdown, outputs=code_display)
         # Button triggers generator which streams text into logs textbox
         run_btn.click(fn=build_and_stream, inputs=None, outputs=logs)
         start_app_btn.click(fn=start_app_and_test, inputs=None, outputs=logs)
+        # Preview controls (now also update the full-width preview_html area)
+        run_prev_btn.click(fn=run_app_and_preview, inputs=None, outputs=[logs, preview_html])
+        stop_prev_btn.click(fn=stop_preview, inputs=None, outputs=[logs, preview_html])
 
     return demo
 
