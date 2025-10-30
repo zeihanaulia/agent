@@ -34,8 +34,22 @@ Proyek ini berisi berbagai notebook dan script untuk eksperimen dengan AI menggu
 
 8. **Spring Boot Live Editor**
    - [Notes / Experiment](notes/experiment-template-build.md): Catatan eksperimen membuat template Spring Boot dan alur build/run.
+   - [Spring Boot + E2B Sandbox + Gradio Preview (experiment notes)](notes/springboot_gradio_sandbox_preview_experiment.md): Hasil eksperimen membangun, menjalankan, dan mem-preview aplikasi Spring Boot di E2B sandbox via Gradio.
    - [Gradio Script](scripts/springboot_gradio_editor.py): Live code editor dengan FileExplorer, Run button, dan streaming build logs (local / E2B).
    - `dataset/springboot-demo/`: Contoh project Spring Boot yang digunakan sebagai template (pom.xml, Application.java, HelloController.java).
+
+   ## TODO / Coding-agent baseline
+
+   Rencana eksperimen berikutnya: siapkan baseline untuk coding-agent yang akan "generate → build → test → repair" otomatis.
+
+   - Catatan eksperimen dan komponen yang bisa dipakai ulang: `notes/springboot_gradio_sandbox_preview_experiment.md`.
+   - Target implementasi awal:
+      - Persistent build sandbox (simpan `~/.m2`) untuk mempercepat iterasi.
+      - `build_and_test_once(sandbox, project_dir)` yang mengembalikan hasil terstruktur (success, logs, errors, artifact_path).
+      - Parser sederhana untuk mengekstrak error kompilasi dari output Maven.
+      - Repair loop API: jalankan build, berikan errors ke agent, terapkan patch yang dikembalikan, ulangi.
+
+   Jika ingin saya implementasikan bagian awal (reuse sandbox + build_and_test_once), beri tahu dan saya akan membuat modul helper dan contoh penggunaan.
 
 ## Notes
 
