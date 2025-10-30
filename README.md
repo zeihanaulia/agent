@@ -1,151 +1,130 @@
+
 # AI Research Agent
 
-Proyek ini berisi berbagai notebook dan script untuk eksperimen dengan AI menggunakan Hugging Face, termasuk klasifikasi gambar, analisis sentimen, pengenalan suara, dan ringkasan teks.
+Proyek ini berisi notebook, script, dan eksperimen untuk eksplorasi model dan agen (Hugging Face, Gradio, E2B, Deep Agents).
 
-## Daftar Notebook dan Script
+## Daftar Notebook & Script
 
-1. **Image Classification**  
-   - [Notebook](notebooks/image_classification.ipynb): Demonstrasi klasifikasi gambar menggunakan Vision Transformer (ViT).  
-   - [Gradio Script](scripts/gradio_image_classification.py): UI interaktif untuk klasifikasi gambar.
+1. **Image Classification**
+   - Notebook: [notebooks/image_classification.ipynb](notebooks/image_classification.ipynb) — klasifikasi gambar (ViT).
+   - Gradio: [gradio/gradio_image_classification.py](gradio/gradio_image_classification.py)
 
-2. **Sentiment Analysis**  
-   - [Notebook](notebooks/sentiment_analysis.ipynb): Analisis sentimen teks menggunakan pipeline sentiment-analysis.  
-   - [Gradio Script](scripts/gradio_sentiment_analysis.py): UI interaktif untuk analisis sentimen.
+2. **Sentiment Analysis**
+   - Notebook: [notebooks/sentiment_analysis.ipynb](notebooks/sentiment_analysis.ipynb) — analisis sentimen.
+   - Gradio: [gradio/gradio_sentiment_analysis.py](gradio/gradio_sentiment_analysis.py)
 
-3. **Speech Recognition**  
-   - [Notebook](notebooks/speech_recognition.ipynb): Konversi speech-to-text menggunakan model seperti Whisper.  
-   - [Gradio Script](scripts/gradio_speech_recognition.py): UI interaktif untuk transkripsi audio.
+3. **Speech Recognition**
+   - Notebook: [notebooks/speech_recognition.ipynb](notebooks/speech_recognition.ipynb) — speech-to-text (Whisper).
+   - Gradio: [gradio/gradio_speech_recognition.py](gradio/gradio_speech_recognition.py)
 
-4. **Summarization**  
-   - [Notebook](notebooks/summarization.ipynb): Ringkasan teks menggunakan model BART.  
-   - [Gradio Script](scripts/gradio_summarization.py): UI interaktif untuk ringkasan teks.
+4. **Summarization**
+   - Notebook: [notebooks/summarization.ipynb](notebooks/summarization.ipynb) — ringkasan teks.
+   - Gradio: [gradio/gradio_summarization.py](gradio/gradio_summarization.py)
 
-5. **GPU Device Detection**  
-   - [Notebook](notebooks/gpu_device_notebook.ipynb): Demonstrasi deteksi perangkat GPU dan sentiment analysis dengan device selection.  
-   - [Gradio Script](scripts/gradio_device_sentiment.py): UI interaktif untuk sentiment analysis dengan auto device detection.
+5. **GPU Device Detection**
+   - Notebook: [notebooks/gpu_device_notebook.ipynb](notebooks/gpu_device_notebook.ipynb) — demo deteksi device.
+   - Gradio: [gradio/gradio_device_sentiment.py](gradio/gradio_device_sentiment.py)
 
-6. **E2B Code Runner**  
-   - [Python Script](e2b_sandbox_runner.py): Implementasi lengkap E2B learning steps untuk sandbox management.  
-   - [Interactive Notebook](notebooks/e2b_sandbox_runner.ipynb): Notebook Jupyter interaktif untuk pembelajaran E2B sandbox.  
-   - [Gradio Script](scripts/gradio_e2b_code_runner.py): UI interaktif seperti Replit untuk coding dan running code di E2B sandbox.
+6. **E2B Code Runner**
+   - Script: [e2b_sandbox_runner.py](e2b_sandbox_runner.py)
+   - Notebook: [notebooks/e2b_sandbox_runner.ipynb](notebooks/e2b_sandbox_runner.ipynb)
+   - Gradio: [gradio/gradio_e2b_code_runner.py](gradio/gradio_e2b_code_runner.py)
 
-7. **Code Repair Agent**  
-   - [Gradio Script](scripts/gradio_code_repair_agent.py): AI agent yang menggunakan E2B sandbox untuk debugging dan memperbaiki kode secara iteratif.
+7. **Code Repair Agent**
+   - Gradio: [gradio/gradio_code_repair_agent.py](gradio/gradio_code_repair_agent.py)
 
 8. **Spring Boot Live Editor**
-   - [Notes / Experiment](notes/experiment-template-build.md): Catatan eksperimen membuat template Spring Boot dan alur build/run.
-   - [Spring Boot + E2B Sandbox + Gradio Preview (experiment notes)](notes/springboot_gradio_sandbox_preview_experiment.md): Hasil eksperimen membangun, menjalankan, dan mem-preview aplikasi Spring Boot di E2B sandbox via Gradio.
-   - [Gradio Script](scripts/springboot_gradio_editor.py): Live code editor dengan FileExplorer, Run button, dan streaming build logs (local / E2B).
-   - `dataset/springboot-demo/`: Contoh project Spring Boot yang digunakan sebagai template (pom.xml, Application.java, HelloController.java).
+   - Notes: [notes/experiment-template-build.md](notes/experiment-template-build.md)
+   - Notes: [notes/springboot_gradio_sandbox_preview_experiment.md](notes/springboot_gradio_sandbox_preview_experiment.md)
+    - Notes: [notes/e2b.experiment-template-build.md](notes/e2b.experiment-template-build.md)
+    - Notes: [notes/e2b.springboot_gradio_sandbox_preview_experiment.md](notes/e2b.springboot_gradio_sandbox_preview_experiment.md)
+   - Gradio: [gradio/gradio_springboot_generator.py](gradio/gradio_springboot_generator.py)
+   - Example project: [dataset/springboot-demo/](dataset/springboot-demo/)
 
-   ## TODO / Coding-agent baseline
+9. **Deep Agents Experiments**
+   - Gradio: [gradio/gradio_deepagent_experiments.py](gradio/gradio_deepagent_experiments.py) — eksperimen agen (basic, planning, subagents, filesystem, parallel) dengan streaming log.
 
-   Rencana eksperimen berikutnya: siapkan baseline untuk coding-agent yang akan "generate → build → test → repair" otomatis.
+## TODO / Coding-agent baseline
 
-   - Catatan eksperimen dan komponen yang bisa dipakai ulang: `notes/springboot_gradio_sandbox_preview_experiment.md`.
-   - Target implementasi awal:
-      - Persistent build sandbox (simpan `~/.m2`) untuk mempercepat iterasi.
-      - `build_and_test_once(sandbox, project_dir)` yang mengembalikan hasil terstruktur (success, logs, errors, artifact_path).
-      - Parser sederhana untuk mengekstrak error kompilasi dari output Maven.
-      - Repair loop API: jalankan build, berikan errors ke agent, terapkan patch yang dikembalikan, ulangi.
+Rencana awal untuk coding-agent: "generate → build → test → repair" otomatis.
 
-   Jika ingin saya implementasikan bagian awal (reuse sandbox + build_and_test_once), beri tahu dan saya akan membuat modul helper dan contoh penggunaan.
+- Reusable components: [notes/springboot_gradio_sandbox_preview_experiment.md](notes/springboot_gradio_sandbox_preview_experiment.md).
+ - Reusable components: [notes/e2b.springboot_gradio_sandbox_preview_experiment.md](notes/e2b.springboot_gradio_sandbox_preview_experiment.md).
+- Target awal:
+  - Persistent build sandbox (cache `~/.m2`).
+  - `build_and_test_once(sandbox, project_dir)` mengembalikan struktur hasil (success, logs, errors, artifact_path).
+  - Parser sederhana untuk mengekstrak error kompilasi dari output Maven.
+  - Repair loop API: jalankan build → kirim errors ke agent → terapkan patch → ulangi.
+
+Jika mau, saya bisa mulai mengimplementasikan helper module untuk ini.
 
 ## Notes
 
-- **[Introducing Hugging Face](notes/introducing_hugging_face.md)**  
-  Catatan lengkap tentang ekosistem Hugging Face, termasuk Transformers Library, Model Hub, dan Gradio.
+Berikut catatan dan eksperimen di folder `notes/`, dikelompokkan per topik. Jika ingin saya ubah nama file (prefix seperti `e2b.` / `huggingface.` / `deepagents.`) beri tahu dan saya akan melakukan rename + update tautan.
 
-- **[Introducing E2B Sandbox](notes/introducing_e2b_sandbox.md)**  
-  Catatan lengkap tentang E2B (Execute Code in Browser), compute layer untuk AI agents dengan sandbox terisolasi, termasuk implementasi praktis dan best practices.
+### E2B (sandbox / execution)
+
+1. [Introducing E2B Sandbox](notes/e2b.introducing_e2b_sandbox.md) — Panduan E2B: lifecycle sandbox, templates, streaming execution.
+2. [Experiment: Membuat template Spring Boot dan menjalankan build](notes/e2b.experiment-template-build.md) — Membuat template Spring Boot dan alur build/run.
+3. [Spring Boot + E2B Sandbox + Gradio Preview (experiment)](notes/e2b.springboot_gradio_sandbox_preview_experiment.md) — Live preview & streaming build logs (Spring Boot + E2B + Gradio).
+
+### Hugging Face (models & Gradio)
+
+4. [Introducing Hugging Face](notes/huggingface.introducing_hugging_face.md) — Intro ke Transformers, model hub, dan contoh Gradio UIs.
+
+### Deep Agents (agent architecture & experiments)
+
+5. [Deep Agents: Introduction & Learning Notes](notes/deepagents.deep_agents_notes.md) — Catatan arsitektur Deep Agents: planning, subagents, filesystem middleware, eksperimen.
 
 ## Requirements
 
-Install dependencies dengan:
-```
+Install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-**Untuk fitur E2B (Code Runner & Code Repair Agent):**
-```
-pip install e2b e2b-code-interpreter
-```
-
-Dan pastikan environment variable `E2B_API_KEY` sudah diset:
+Untuk fitur E2B (Code Runner & Code Repair Agent):
 ```bash
+pip install e2b e2b-code-interpreter
 export E2B_API_KEY="your_api_key_here"
 ```
-Dapatkan API key dari: https://e2b.dev/dashboard
 
-Direkomendasikan environment:
-
-- Python 3.10 atau lebih baru.
-- Buat dan aktifkan virtual environment sebelum instalasi:
-   - python -m venv .venv
-   - source .venv/bin/activate  # macOS / Linux (zsh)
-   - .\\.venv\\Scripts\\activate  # Windows (PowerShell/CMD)
-
-Catatan: jika `requirements.txt` tidak mem-pin versi paket penting (mis. `transformers`, `torch`), pertimbangkan untuk menyematkan versi paket agar lebih reproducible.
+Direkomendasikan: Python 3.10+. Buat virtualenv sebelum instalasi:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
 ## Cara Menjalankan
 
-1. Aktivasi virtual environment (jika ada): `source .venv/bin/activate`
-2. Jalankan notebook dengan Jupyter: `jupyter notebook`
-3. Atau jalankan script Python langsung.
+1. Aktifkan virtualenv (jika ada): `source .venv/bin/activate`
+2. Jalankan notebook atau skrip Gradio. Contoh Gradio:
 
-Contoh menjalankan skrip Gradio (misal untuk klasifikasi gambar):
-
-```
-python scripts/gradio_image_classification.py
-```
-
-Contoh menjalankan E2B scripts:
-
-```
-# E2B Code Runner (seperti Replit)
-python scripts/gradio_e2b_code_runner.py
-
-# E2B Code Repair Agent (AI yang auto fix code)
-python scripts/gradio_code_repair_agent.py
-
-# E2B Learning Script (command line)
-python e2b_sandbox_runner.py
+```bash
+python gradio/gradio_image_classification.py
+python gradio/gradio_e2b_code_runner.py
+python gradio/gradio_code_repair_agent.py
+python gradio/gradio_deepagent_experiments.py
 ```
 
-Biasanya Gradio akan membuka UI di http://127.0.0.1:7860 kecuali dinyatakan lain di skrip.
+Gradio biasanya tersedia di http://127.0.0.1:7860
 
-### Model Download
-Saat menjalankan notebook atau script Gradio untuk pertama kali, model AI akan otomatis didownload dari Hugging Face Hub. Model disimpan di direktori cache lokal (`~/.cache/huggingface/hub/`) untuk penggunaan selanjutnya.
+## Model Download & Cache
 
-### Cleanup Model Cache
-Untuk membersihkan model yang telah didownload dan mengosongkan ruang disk:
-- Hapus cache folder secara manual: `rm -rf ~/.cache/huggingface/hub/`
-- Untuk melihat ukuran cache: `du -sh ~/.cache/huggingface/`
+Model yang digunakan otomatis didownload ke `~/.cache/huggingface/hub/`.
+Hapus cache jika perlu: `rm -rf ~/.cache/huggingface/hub/`
 
-**Catatan:** Model akan didownload ulang saat diperlukan jika cache dihapus.
-
-Catatan HF token / rate limits:
-- Jika Anda mengakses model private atau ingin mengurangi kemungkinan terkena rate limit, set environment variable `HF_TOKEN` sebelum menjalankan skrip/notebook:
-   - export HF_TOKEN="hf_xxx..."
-   - Lihat https://huggingface.co/settings/tokens untuk membuat token.
+Set `HF_TOKEN` jika akses model private atau ingin mengurangi rate limits:
+```bash
+export HF_TOKEN="hf_xxx"
+```
 
 ## Troubleshooting (singkat)
-- Model download gagal: periksa koneksi, ruang disk, dan permission pada `~/.cache/huggingface/`.
-- Masalah CUDA / GPU: pastikan versi `torch` kompatibel dengan CUDA di mesin Anda. Pada macOS tanpa CUDA gunakan versi CPU dari `torch`.
-- Jika notebook memerlukan banyak memori/GPU: gunakan model lebih kecil (distilled) atau jalankan di CPU untuk pengujian ringan.
-- Rate limit dari Hugging Face: gunakan `HF_TOKEN` atau model yang sudah dicache.
-- **E2B Issues**: Pastikan `E2B_API_KEY` sudah diset dengan benar. Jika mendapat error koneksi, periksa internet connection dan API key validity.
 
-## Kontribusi & Lisensi (opsional)
-- Jika repo akan dibagikan publik, pertimbangkan menambahkan file `LICENSE` dan `CONTRIBUTING.md`.
+- Model download gagal: periksa koneksi dan disk.
+- CUDA/GPU issues: pastikan versi `torch` kompatibel atau gunakan CPU build di macOS.
+- E2B: pastikan `E2B_API_KEY` benar.
 
----
-Ringkasan perubahan: menambah rekomendasi Python/venv, catatan HF_TOKEN, contoh menjalankan Gradio, troubleshooting singkat, dan penambahan fitur E2B (Code Runner, Code Repair Agent, dan dokumentasi lengkap).
+## Kontribusi & Lisensi
 
-## Referensi
-
-- [Hugging Face Models](https://huggingface.co/models)
-- [Transformers Library](https://github.com/huggingface/transformers)
-- [Gradio](https://gradio.app)
-- [E2B Documentation](https://e2b.dev/docs)
-- [E2B Dashboard](https://e2b.dev/dashboard)
+Pertimbangkan menambahkan `LICENSE` dan `CONTRIBUTING.md` jika repo akan dibagikan publik.
