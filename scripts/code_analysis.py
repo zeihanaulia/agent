@@ -5,69 +5,89 @@ DEEP CODE ANALYSIS AGENT - Educational Implementation
 PURPOSE:
     This script demonstrates how to build an AI-powered code analysis agent
     that can explore and understand any codebase. It uses DeepAgents framework
-    with custom tools to interact with the filesystem and analyze code structure,
-    technology stack, architecture, and functionality.
+    with built-in FilesystemBackend to interact with the filesystem and analyze
+    code structure, technology stack, architecture, and functionality.
 
 KEY CONCEPTS:
-    1. Tool Definition (@tool decorator) - How AI agents interact with external systems
-    2. Agent Invocation - Running the agent with a specific task
-    3. Message Processing - Understanding AI agent communication flow
-    4. Result Extraction - Parsing agent responses for display
+    1. FilesystemBackend - LangChain's built-in filesystem abstraction following BackendProtocol
+    2. create_deep_agent - Creating agents with filesystem middleware via backend
+    3. Built-in tools - ls, read_file, write_file, edit_file, glob, grep (auto-provided)
+    4. Agent Invocation - Running the agent with a specific task
+    5. Message Processing - Understanding AI agent communication flow
+    6. Result Extraction - Parsing agent responses for display
 
 WORKFLOW:
     Step 1: Load environment & configure LLM (ChatOpenAI)
-    Step 2: Define custom tools for filesystem access (list_directory, read_file, etc.)
+    Step 2: Configure FilesystemBackend with root_dir for secure filesystem access
     Step 3: Create analysis prompt that guides the agent
-    Step 4: Instantiate DeepAgent with tools and prompt
+    Step 4: Instantiate DeepAgent with backend and prompt
     Step 5: Invoke agent with codebase path
     Step 6: Parse messages and display final analysis
+
+BEST PRACTICES:
+    - Use FilesystemBackend for real filesystem access with security
+    - Leverage built-in tools (ls, read_file, glob, grep) - no custom tools needed
+    - Set absolute root_dir to sandbox agent filesystem access
+    - Agent automatically gets 6 filesystem tools via backend
 """
 
 import argparse
 import os
 import sys
 import time
-from pathlib import Path
 
 from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
-from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 # Load environment variables from .env file
 # Contains: LITELLM_MODEL, LITELLM_VIRTUAL_KEY, LITELLM_API
+# Optional: LANGSMITH_API_KEY, LANGSMITH_PROJECT for observability
 load_dotenv()
 
 # ==============================================================================
 # STEP 1: CONFIGURE THE AI MODEL
 # ==============================================================================
 # We need to set up the language model that will power our agent.
-# This model will use the tools we define to understand and analyze code.
+# This model will use the built-in tools from FilesystemBackend to analyze code.
 
 # Get configuration from environment or use defaults
 model_name = os.getenv("LITELLM_MODEL", "gpt-4o-mini")
 api_key = os.getenv("LITELLM_VIRTUAL_KEY")
 api_base = os.getenv("LITELLM_API")
 
+# Validate that required environment variables are set
+if not api_key or not api_base:
+    raise ValueError(
+        "Missing required environment variables:\n"
+        "  LITELLM_VIRTUAL_KEY: LLM API key\n"
+        "  LITELLM_API: LLM API base URL\n"
+        "Please set these in your .env file or environment."
+    )
+
 # Determine if this is a reasoning model (models with "thinking" capabilities)
-# Reasoning models like GPT-5-mini work better with higher temperature (more creativity)
+# Some models like GPT-5-mini ONLY support temperature=1.0
+# Some models like gpt-oss-120b require specific temperature values
 is_reasoning_model = any(
     keyword in model_name.lower()
     for keyword in ["gpt-5", "5-mini", "oss", "120b", "thinking", "reasoning"]
 )
 
 # Set temperature based on model type
-# - Reasoning models: temperature=1.0 (more creative, explores more options)
-# - Other models: temperature=0.1 (more focused, deterministic)
+# - Reasoning models: temperature=1.0 (required, more creative, explores more options)
+# - Other models: temperature=0.7 (balanced, good for analysis)
+# NOTE: azure/gpt-5-mini only supports temperature=1.0, not 0.1
 if is_reasoning_model:
     temperature = 1.0
 else:
-    temperature = 0.1
+    temperature = 0.7  # Changed from 0.1 to 0.7 for broader model compatibility
 
 # Initialize the ChatOpenAI model with our configuration
-# This model will be used by the agent to make decisions and analyze code
+# Use SecretStr for API key to satisfy type requirements
 analysis_model = ChatOpenAI(
-    api_key=lambda: api_key,  # pyright: ignore[reportArgumentType]
+    api_key=SecretStr(api_key),
     model=model_name,
     base_url=api_base,
     temperature=temperature,
@@ -75,249 +95,25 @@ analysis_model = ChatOpenAI(
 
 
 # ==============================================================================
-# STEP 2: DEFINE CUSTOM TOOLS FOR FILESYSTEM ACCESS
+# STEP 2: CONFIGURE FILESYSTEM BACKEND
 # ==============================================================================
-# AI agents need tools to interact with the external world. We define custom tools
-# that allow the agent to:
-# - List files in directories
-# - Read file contents
-# - Find files by pattern
-# - Understand directory structure
+# LangChain's FilesystemBackend provides built-in filesystem tools following
+# the BackendProtocol. This is a best practice alternative to custom tools.
 #
-# Each tool is decorated with @tool which tells DeepAgents to make it available
-# to the AI agent. The docstring of each function becomes the tool's description.
-
-
-@tool
-def list_directory(path: str) -> str:
-    """
-    List all files and directories in a given path.
-    
-    PURPOSE:
-        This tool allows the agent to see what files and folders exist in a directory.
-        This is the first step in understanding a codebase structure.
-    
-    ARGUMENTS:
-        path (str): The filesystem path to list. Can be absolute or relative.
-                   Examples: "/Users/username/project", "src", "./config"
-    
-    RETURN VALUE (str):
-        A formatted string listing all items in the directory with their type:
-        - "[DIR]  folder_name/" for directories
-        - "[FILE] file_name" for files
-        Items are sorted alphabetically for easier reading.
-        
-        Returns error message if:
-        - Path doesn't exist
-        - Permission denied
-        - Other filesystem errors
-    
-    WHY THIS TOOL:
-        The agent needs to explore directories to understand project organization.
-        Example: seeing [DIR] src/ tells agent where source code is located.
-    """
-    try:
-        items = []
-        p = Path(path)
-        if not p.exists():
-            return f"Path does not exist: {path}"
-
-        for item in sorted(p.iterdir()):
-            if item.is_dir():
-                items.append(f"[DIR]  {item.name}/")
-            else:
-                items.append(f"[FILE] {item.name}")
-
-        return "\n".join(items) if items else "Empty directory"
-    except Exception as e:
-        return f"Error listing directory: {str(e)}"
-
-
-@tool
-def read_file(file_path: str, max_lines: int = 100) -> str:
-    """
-    Read contents of a file (limited to max_lines to avoid overwhelming the agent).
-    
-    PURPOSE:
-        This tool allows the agent to read and understand file contents.
-        Used to read configuration files (pom.xml, package.json, etc.) and source code.
-    
-    ARGUMENTS:
-        file_path (str): Full path to the file to read.
-                        Examples: "src/main/java/Application.java", "pom.xml"
-        
-        max_lines (int): Maximum number of lines to return (default 100).
-                        PURPOSE: Prevents flooding agent with huge file contents.
-                        EXAMPLE: If file has 1000 lines, only first 100 are returned
-                        with a message indicating more lines exist.
-    
-    RETURN VALUE (str):
-        The file contents as a string, with each line as-is from the file.
-        If file exceeds max_lines, includes a message like:
-        "... (file has 1000 lines total, showing first 100)"
-        
-        Returns error message if:
-        - File doesn't exist
-        - Cannot read file (permission issues)
-        - File encoding issues
-    
-    WHY THIS TOOL:
-        The agent needs to read actual code and config files to understand:
-        - Project dependencies (pom.xml, package.json)
-        - Project structure and entry points
-        - Technology stack and frameworks used
-    """
-    try:
-        p = Path(file_path)
-        if not p.exists():
-            return f"File does not exist: {file_path}"
-
-        with open(p, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-
-        # Return first max_lines
-        content = "".join(lines[:max_lines])
-        if len(lines) > max_lines:
-            content += (
-                f"\n... (file has {len(lines)} lines total, showing first {max_lines})"
-            )
-
-        return content
-    except Exception as e:
-        return f"Error reading file: {str(e)}"
-
-
-@tool
-def find_files_by_pattern(directory: str, pattern: str) -> str:
-    """
-    Find files matching a pattern (e.g., '*.java', '*.md', '*.py').
-    
-    PURPOSE:
-        This tool helps the agent quickly locate all files of a specific type.
-        Without this, the agent would need to manually explore every folder.
-    
-    ARGUMENTS:
-        directory (str): Starting directory to search in. Search is recursive
-                        (includes all subdirectories).
-                        Examples: "src", "/project/root", "."
-        
-        pattern (str): Glob pattern to match filenames.
-                      Examples:
-                      - "*.java" finds all Java files
-                      - "*.json" finds all JSON files
-                      - "README*" finds README files
-                      - "test_*.py" finds Python test files
-    
-    RETURN VALUE (str):
-        A list of relative file paths matching the pattern, one per line.
-        Maximum 50 results returned (to avoid overwhelming agent).
-        
-        Returns error message if:
-        - Directory doesn't exist
-        - No files match the pattern
-        - Permission issues
-    
-    WHY THIS TOOL:
-        The agent uses this to:
-        - Find all Java files in "src" directory
-        - Find configuration files like "pom.xml", "package.json"
-        - Find README or documentation files
-        - Locate test files
-    """
-    try:
-        p = Path(directory)
-        if not p.exists():
-            return f"Directory does not exist: {directory}"
-
-        matches = list(p.rglob(pattern))
-        if not matches:
-            return f"No files matching pattern '{pattern}' found in {directory}"
-
-        return "\n".join([str(m.relative_to(p)) for m in sorted(matches)[:50]])
-    except Exception as e:
-        return f"Error finding files: {str(e)}"
-
-
-@tool
-def get_directory_structure(path: str, max_depth: int = 3) -> str:
-    """
-    Get tree structure of directories (like 'tree' command in Unix).
-    
-    PURPOSE:
-        This tool provides a visual representation of the directory structure.
-        Helps agent understand the overall organization of the codebase at a glance.
-    
-    ARGUMENTS:
-        path (str): Root directory to start tree from.
-                   Examples: "/project", ".", "src"
-        
-        max_depth (int): How many levels deep to show (default 3).
-                        PURPOSE: Prevents overwhelming agent with deeply nested structures.
-                        EXAMPLE: max_depth=3 means show root/level1/level2/level3 only
-    
-    RETURN VALUE (str):
-        A tree-like representation using box-drawing characters:
-        - "├── " for items (not last in folder)
-        - "└── " for last item in folder
-        - "│   " for continuation lines
-        - "[DIR]" suffix (/) for directories
-        - No suffix for files
-        
-        Example output:
-        ```
-        project/
-        ├── src/
-        │   ├── main/
-        │   │   └── java/
-        │   └── test/
-        ├── pom.xml
-        └── README.md
-        ```
-    
-    WHY THIS TOOL:
-        The agent uses this to:
-        - Get a quick overview of project structure
-        - Understand standard layouts (Maven, Gradle, Node.js patterns)
-        - Identify where source code, tests, and configs are located
-    """
-    try:
-        p = Path(path)
-        if not p.exists():
-            return f"Path does not exist: {path}"
-
-        def build_tree(directory: Path, prefix: str = "", depth: int = 0) -> list:
-            if depth > max_depth:
-                return []
-
-            items = []
-            try:
-                children = sorted(
-                    directory.iterdir(), key=lambda x: (not x.is_dir(), x.name)
-                )
-                for i, child in enumerate(children[:20]):  # Limit to 20 items per dir
-                    is_last = i == len(children) - 1
-                    current_prefix = "└── " if is_last else "├── "
-                    next_prefix = "    " if is_last else "│   "
-
-                    if child.is_dir():
-                        items.append(f"{prefix}{current_prefix}{child.name}/")
-                        items.extend(build_tree(child, prefix + next_prefix, depth + 1))
-                    else:
-                        items.append(f"{prefix}{current_prefix}{child.name}")
-            except PermissionError:
-                pass
-
-            return items
-
-        tree = [p.name + "/"] + build_tree(p)
-        return "\n".join(tree)
-    except Exception as e:
-        return f"Error building tree: {str(e)}"
-
-
-# Register all tools so the agent can use them
-# Register all tools so the agent can use them
-tools = [list_directory, read_file, find_files_by_pattern, get_directory_structure]
+# Built-in tools provided automatically:
+#   - ls: List files with metadata (size, modified_at, is_dir)
+#   - read_file: Read file contents with offset/limit support for large files
+#   - write_file: Create new files with content validation
+#   - edit_file: Perform exact string replacements in files
+#   - glob: Advanced pattern matching with recursive support
+#   - grep: Fast text search with ripgrep integration
+#
+# Benefits of using built-in backend:
+#   ✓ No custom tool definition needed (@tool decorators eliminated)
+#   ✓ Built-in security features (path validation, symlink protection)
+#   ✓ Automatic large content handling (eviction to filesystem)
+#   ✓ LangGraph state integration via BackendProtocol
+#   ✓ Multiple backend support (FilesystemBackend, StateBackend, StoreBackend, etc.)
 
 # ==============================================================================
 # STEP 3: SETUP ARGUMENT PARSING AND CODEBASE PATH
@@ -343,11 +139,28 @@ if codebase_path == default_codebase_path and sys.stdin.isatty():
     if user_input:
         codebase_path = user_input
 
+# Validate that codebase path exists and is accessible
+if not os.path.exists(codebase_path):
+    raise ValueError(
+        f"Codebase path does not exist: {codebase_path}\n"
+        f"Please provide a valid path using --codebase-path or CODEBASE_PATH env var"
+    )
+
+if not os.path.isdir(codebase_path):
+    raise ValueError(
+        f"Codebase path is not a directory: {codebase_path}\n"
+        f"Please provide a directory path"
+    )
+
+# Convert to absolute path for consistency
+codebase_path = os.path.abspath(codebase_path)
+
 # ==============================================================================
 # STEP 4: CREATE THE ANALYSIS PROMPT (Agent's Instructions)
 # ==============================================================================
 # This is the system prompt that tells the agent WHAT to do and HOW to do it.
-# The agent uses our tools and this prompt to guide its analysis.
+# The agent uses built-in filesystem tools via FilesystemBackend and this prompt
+# to guide its analysis.
 
 analysis_prompt = f"""\
 You are an expert code analysis agent. Your primary goal is to analyze the codebase and provide a comprehensive understanding of the project.
@@ -355,12 +168,12 @@ You are an expert code analysis agent. Your primary goal is to analyze the codeb
 CODEBASE PATH: {codebase_path}
 
 CONTEXT:
-- You have access to the full codebase and can use tools to explore it
+- You have access to the full codebase via built-in filesystem tools
 - The workspace structure may be truncated, use tools to collect more context if needed
 - Focus on gathering relevant context without going overboard
 
 YOUR TASK:
-1. **Gather Context**: Use tools to explore the directory structure and list files
+1. **Gather Context**: Use ls and glob to explore the directory structure
 2. **Identify Project Purpose**: Read README files, package.json, requirements.txt, pom.xml, or build.gradle to understand the project
 3. **Analyze Code Content**: Read key source files to understand functionality
 4. **Examine Architecture**: Map the project structure (folders, packages, layers)
@@ -370,39 +183,64 @@ YOUR TASK:
    - Architecture and main components
    - Key functionalities
 
-TOOL USE INSTRUCTIONS:
-- You can call multiple tools in one response when running multiple tools can answer the question
-- Use tools to collect context instead of making assumptions
-- Call tools repeatedly to gather as much context as needed until you have completed the task fully
-- Prefer calling tools in parallel when possible
-- Follow the tool schema carefully and include all required fields
-- If a tool exists to do a task, use the tool instead of manual actions
-
-AVAILABLE TOOLS:
-- list_directory(path): List files and directories in a given path
-- read_file(file_path, max_lines): Read contents of a file (limited to max_lines, default 100)
-- find_files_by_pattern(directory, pattern): Find files matching a pattern (e.g., '*.py', '*.md', '*.json')
-- get_directory_structure(path, max_depth): Get tree structure of directories (default max_depth=3)
+BUILT-IN FILESYSTEM TOOLS (automatically available):
+- ls(path): List files and directories with metadata (size, modified_at, is_dir)
+- read_file(path, offset, limit): Read file contents with line numbers and pagination
+- write_file(path, content): Create new files
+- edit_file(path, old_string, new_string): Perform exact string replacements
+- glob(pattern): Find files matching patterns (supports **/*.py recursive patterns)
+- grep(pattern, path, glob): Fast text search with context
 
 ANALYSIS WORKFLOW:
-1. First, check the directory structure to understand the project layout
+1. First, use ls or glob to understand the project layout
 2. Read key configuration files (README.md, package.json, requirements.txt, setup.py, etc.)
 3. Find and read main source files to understand the core functionality
 4. Analyze the architecture based on your findings
 5. Provide your comprehensive analysis with concrete examples from the code
 
+TOOL USE BEST PRACTICES:
+- Use glob() for pattern matching: glob("**/*.py"), glob("*.json"), glob("src/**/*.java")
+- Use read_file() with offset/limit for pagination on large files
+- Use grep() to search for specific patterns across files
+- Combine tools in one response when possible to reduce turns
+
 START EXPLORATION:
 Begin by exploring the codebase structure and key files to build your understanding.
 """
 
-agent = create_deep_agent(
-    system_prompt=analysis_prompt,
-    model=analysis_model,
-    tools=tools,  # Add tools to agent
-)
+# ==============================================================================
+# STEP 5: INSTANTIATE DEEP AGENT WITH FILESYSTEM BACKEND
+# ==============================================================================
+# Create the deep agent with FilesystemBackend for real filesystem access.
+# The backend provides all 6 filesystem tools (ls, read_file, write_file, etc.)
+# without needing custom tool definitions.
+
+# Configure FilesystemBackend with the codebase path
+# This ensures the agent can only access files under root_dir (security feature)
+try:
+    backend = FilesystemBackend(root_dir=codebase_path)
+except Exception as e:
+    raise RuntimeError(
+        f"Failed to initialize FilesystemBackend with root_dir={codebase_path}\n"
+        f"Error: {str(e)}"
+    ) from e
+
+# Create the deep agent with backend
+# Note: DeepAgents will automatically provide 6 built-in filesystem tools
+try:
+    agent = create_deep_agent(
+        system_prompt=analysis_prompt,
+        model=analysis_model,
+        backend=backend,  # Pass backend instead of tools
+    )
+except Exception as e:
+    raise RuntimeError(
+        f"Failed to create deep agent with FilesystemBackend\n"
+        f"Error: {str(e)}"
+    ) from e
 
 # ==============================================================================
-# STEP 5: DISPLAY STARTUP INFORMATION AND RUN THE AGENT
+# STEP 6: DISPLAY STARTUP INFORMATION AND RUN THE AGENT
 # ==============================================================================
 # Print verbose output to show the user what's happening
 
@@ -411,13 +249,13 @@ print("🤖 DEEP CODE ANALYSIS AGENT (VERBOSE MODE)")
 print("=" * 80)
 print(f"📁 Target Codebase: {codebase_path}")
 print(f"🛠️  Model: {model_name}")
-print("💾 Backend: Custom Tools")
+print("💾 Backend: FilesystemBackend (LangChain Built-in)")
 print(f"🌡️  Temperature: {temperature}")
 print("=" * 80)
 print("🔍 Starting analysis... This may take a few moments.")
 print()
 
-print(f"[{time.strftime('%H:%M:%S')}] 📋 Agent initialized with custom tools")
+print(f"[{time.strftime('%H:%M:%S')}] 📋 Agent initialized with FilesystemBackend")
 print(f"[{time.strftime('%H:%M:%S')}] 🔍 Starting codebase analysis...")
 
 start_time = time.time()
@@ -428,19 +266,37 @@ start_time = time.time()
 # 2. Make decisions about what to read/analyze
 # 3. Generate a comprehensive analysis
 # 4. Return all messages in the conversation history
-result = agent.invoke(
-    {
-        "input": f"Please analyze the codebase at {codebase_path}"
-    }
-)
+
+try:
+    result = agent.invoke(
+        {
+            "input": f"Please analyze the codebase at {codebase_path}",
+        },
+        # Add timeout to prevent infinite loops (in seconds)
+        # Note: This requires LangGraph version that supports timeout
+    )
+except TimeoutError as e:
+    print(f"❌ Agent analysis timed out: {str(e)}")
+    print("The agent took too long to complete the analysis.")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during agent execution: {str(e)}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
 analysis_time = time.time() - start_time
 print(f"[{time.strftime('%H:%M:%S')}] ✅ Analysis completed in {analysis_time:.2f} seconds")
 
 # ==============================================================================
-# STEP 6: EXTRACT AND DISPLAY RESULTS
+# STEP 7: EXTRACT AND DISPLAY RESULTS
 # ==============================================================================
 # Process the agent's messages to extract and display the final analysis
+
+# Validate result structure
+if not result or not isinstance(result, dict):
+    print("❌ Error: Agent returned invalid result structure")
+    sys.exit(1)
 
 # Count tool calls made during the analysis
 tool_call_counter = 0
@@ -448,11 +304,16 @@ if "messages" in result:
     for msg in result["messages"]:
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             tool_call_counter += len(msg.tool_calls)
+else:
+    print("⚠️  Warning: No messages found in result")
 
 print("\n📈 Analysis Summary:")
 print(f"   • Tool calls made: {tool_call_counter}")
 print(f"   • Analysis time: {analysis_time:.2f} seconds")
-print(f"   • Average time per tool call: {analysis_time/tool_call_counter:.2f} seconds" if tool_call_counter > 0 else "   • No tool calls made")
+if tool_call_counter > 0:
+    print(f"   • Average time per tool call: {analysis_time/tool_call_counter:.2f} seconds")
+else:
+    print("   • No tool calls made (agent may have failed or been blocked)")
 
 print("\n" + "=" * 80)
 print("📊 FINAL ANALYSIS RESULT:")
@@ -477,7 +338,15 @@ if "messages" in result:
         print("FINAL RESULT:")
         print(final_messages[-1])
     else:
-        print("No detailed analysis result found.")
+        print("❌ No detailed analysis result found.")
+        if tool_call_counter == 0:
+            print("\nPossible reasons:")
+            print("  1. Agent failed to initialize properly")
+            print("  2. Model API key or credentials are invalid")
+            print("  3. Backend failed to provide filesystem tools")
+            print("  4. Agent got stuck in infinite loop (check LangSmith trace)")
+else:
+    print("❌ Error: No messages in result")
 
 # ==============================================================================
 # OPTIONAL: DISPLAY DETAILED MESSAGE TRACE (for learning/debugging)

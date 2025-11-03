@@ -62,6 +62,23 @@ Jika mau, saya bisa mulai mengimplementasikan helper module untuk ini.
 
 Berikut catatan dan eksperimen di folder `notes/`, dikelompokkan per topik. Jika ingin saya ubah nama file (prefix seperti `e2b.` / `huggingface.` / `deepagents.`) beri tahu dan saya akan melakukan rename + update tautan.
 
+### Code Analysis (filesystem backend & agent implementation)
+
+1. [Code Analysis Guide](notes/codeanalysis.guide.md) — Panduan lengkap untuk code analysis agent dengan FilesystemBackend.
+2. [Filesystem Backend Index](notes/codeanalysis.filesystem-backend-index.md) — Daftar lengkap dokumentasi FilesystemBackend implementation.
+3. [Filesystem Backend Implementation Guide](notes/codeanalysis.filesystem-backend-implementation-guide.md) — Panduan implementasi FilesystemBackend dari awal.
+4. [Filesystem Backend Migration Summary](notes/codeanalysis.filesystem-backend-migration-summary.md) — Ringkasan migrasi dari custom tools ke FilesystemBackend.
+5. [Filesystem Backend Quick Reference](notes/codeanalysis.filesystem-backend-quick-reference.md) — Referensi cepat untuk FilesystemBackend API dan tools.
+6. [Filesystem Backend Summary](notes/codeanalysis.filesystem-backend-summary.md) — Ringkasan implementasi dan hasil testing FilesystemBackend.
+7. [Filesystem Backend Temperature Bugfix](notes/codeanalysis.filesystem-backend-temperature-bugfix.md) — Dokumentasi perbaikan bug temperature compatibility.
+8. [Filesystem Backend Debugging](notes/codeanalysis.filesystem-backend-debugging.md) — Catatan debugging dan troubleshooting FilesystemBackend.
+9. [Filesystem Backend Resolution](notes/codeanalysis.filesystem-backend-resolution.md) — Resolusi masalah dan solusi yang diterapkan.
+10. [Filesystem Backend Files Created](notes/codeanalysis.filesystem-backend-files-created.md) — Daftar file dokumentasi yang dibuat selama implementasi.
+11. [Filesystem Backend Pending Fix](notes/codeanalysis.filesystem-backend-pending-fix.md) — Catatan masalah yang masih pending (jika ada).
+12. [Filesystem Backend Comparison](notes/codeanalysis.filesystem-backend-comparison.md) — Perbandingan FilesystemBackend vs custom tools.
+13. [Builtin vs Custom Tools Comparison](notes/builtin-vs-custom-tools-comparison.md) — Analisis perbandingan tools built-in vs custom.
+14. [CodeAnalysis: Builtin vs Custom Tools](notes/codeanalysis.builtin-vs-custom-tools-comparison.md) — Perbandingan spesifik untuk code analysis tools.
+
 ### E2B (sandbox / execution)
 
 1. [Introducing E2B Sandbox](notes/e2b.introducing_e2b_sandbox.md) — Panduan E2B: lifecycle sandbox, templates, streaming execution.
@@ -70,11 +87,11 @@ Berikut catatan dan eksperimen di folder `notes/`, dikelompokkan per topik. Jika
 
 ### Hugging Face (models & Gradio)
 
-4. [Introducing Hugging Face](notes/huggingface.introducing_hugging_face.md) — Intro ke Transformers, model hub, dan contoh Gradio UIs.
+1. [Introducing Hugging Face](notes/huggingface.introducing_hugging_face.md) — Intro ke Transformers, model hub, dan contoh Gradio UIs.
 
 ### Deep Agents (agent architecture & experiments)
 
-5. [Deep Agents: Introduction & Learning Notes](notes/deepagents.deep_agents_notes.md) — Catatan arsitektur Deep Agents: planning, subagents, filesystem middleware, eksperimen.
+1. [Deep Agents: Introduction & Learning Notes](notes/deepagents.deep_agents_notes.md) — Catatan arsitektur Deep Agents: planning, subagents, filesystem middleware, eksperimen.
 
 ## Requirements
 
