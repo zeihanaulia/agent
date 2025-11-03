@@ -44,6 +44,10 @@ Proyek ini berisi notebook, script, dan eksperimen untuk eksplorasi model dan ag
 9. **Deep Agents Experiments**
    - Gradio: [gradio/gradio_deepagent_experiments.py](gradio/gradio_deepagent_experiments.py) — eksperimen agen (basic, planning, subagents, filesystem, parallel) dengan streaming log.
 
+10. **Code Analysis Agent**
+    - Notebook: [notebooks/code_analysis_agent.ipynb](notebooks/code_analysis_agent.ipynb) — Tutorial lengkap AI-powered code analysis menggunakan DeepAgents + FilesystemBackend.
+    - Script: [scripts/code_analysis.py](scripts/code_analysis.py) — Script CLI untuk code analysis agent.
+
 ## TODO / Coding-agent baseline
 
 Rencana awal untuk coding-agent: "generate → build → test → repair" otomatis.
@@ -106,6 +110,14 @@ pip install e2b e2b-code-interpreter
 export E2B_API_KEY="your_api_key_here"
 ```
 
+Untuk Code Analysis Agent (DeepAgents + FilesystemBackend):
+```bash
+pip install deepagents langchain-openai python-dotenv pydantic
+export LITELLM_MODEL="gpt-4o-mini"  # atau model lain
+export LITELLM_VIRTUAL_KEY="your_api_key"
+export LITELLM_API="https://api.openai.com/v1"  # atau endpoint lain
+```
+
 Direkomendasikan: Python 3.10+. Buat virtualenv sebelum instalasi:
 ```bash
 python -m venv .venv
@@ -122,6 +134,16 @@ python gradio/gradio_image_classification.py
 python gradio/gradio_e2b_code_runner.py
 python gradio/gradio_code_repair_agent.py
 python gradio/gradio_deepagent_experiments.py
+```
+
+3. Untuk Code Analysis Agent:
+
+```bash
+# Jalankan notebook (recommended untuk learning)
+jupyter notebook notebooks/code_analysis_agent.ipynb
+
+# Atau jalankan script CLI
+python scripts/code_analysis.py --codebase-path /path/to/codebase
 ```
 
 Gradio biasanya tersedia di http://127.0.0.1:7860
