@@ -47,4 +47,12 @@ build/
 
 # Misc temp files
 *.swp
-*.tmp
+*.tmpdataset/codes/deepagents/
+dataset/codes/deepagents/
+
+# Ignore dataset/codes except springboot-demo
+dataset/codes/*
+!dataset/codes/springboot-demo/
+
+# Ignore entire outputs folder
+outputs/
