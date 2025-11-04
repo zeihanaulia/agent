@@ -126,15 +126,37 @@ class FileScopeGuardrail(AgentMiddleware):
         return os.path.normpath(path).replace("\\", "/").lower()
 
     def _is_allowed(self, file_mention: str) -> bool:
-        """Check if a mentioned file is in the allowed list."""
+        """
+        Check if a mentioned file is in the allowed list.
+        
+        Supports:
+        - Exact matches: "/path/to/HelloController.java"
+        - Suffix matches: "HelloController.java", "springboot/HelloController.java"
+        - Relative paths: "src/main/java/..." or just "HelloController.java"
+        """
         normalized_mention = self._normalize_path(file_mention)
 
         for allowed in self.allowed_files:
             normalized_allowed = self._normalize_path(allowed)
-            # Check exact match or suffix match (for relative paths)
-            if normalized_mention == normalized_allowed or normalized_mention.endswith(
-                "/" + os.path.basename(normalized_allowed)
-            ):
+            
+            # Exact match
+            if normalized_mention == normalized_allowed:
+                return True
+            
+            # Check if mention is a suffix of allowed path
+            # e.g., "HelloController.java" matches "/path/to/HelloController.java"
+            if normalized_allowed.endswith(normalized_mention) or normalized_allowed.endswith("/" + normalized_mention):
+                return True
+            
+            # Check if mention is a partial path match
+            # e.g., "springboot/HelloController.java" matches "/path/to/springboot/HelloController.java"
+            if "/" + normalized_mention in "/" + normalized_allowed:
+                return True
+            
+            # Check basename match (for simple mentions like "HelloController.java")
+            mention_basename = os.path.basename(normalized_mention)
+            allowed_basename = os.path.basename(normalized_allowed)
+            if mention_basename == allowed_basename and mention_basename:
                 return True
 
         return False
@@ -231,24 +253,33 @@ class ToolCallValidationMiddleware(AgentMiddleware):
     Configuration:
     - soft_mode: If True, logs violations but allows tool to execute
     - verbose: If True, prints detailed validation logs
+    
+    FIX for guardrail blocking issue:
+    - Now accepts both individual files AND allowed directories
+    - Allows new files to be created within allowed directories
+    - Properly validates write_file calls for files that don't exist yet
     """
 
-    def __init__(self, allowed_files: List[str], codebase_root: str, soft_mode: bool = False, verbose: bool = False):
+    def __init__(self, allowed_files: List[str], codebase_root: str, allowed_dirs: Optional[List[str]] = None, 
+                 soft_mode: bool = False, verbose: bool = False):
         """
         Args:
-            allowed_files: List of relative file paths allowed
+            allowed_files: List of relative/absolute file paths allowed
             codebase_root: Absolute path to codebase root directory
+            allowed_dirs: List of directories where new files can be created (NEW FIX)
             soft_mode: If True, log violations but don't block
             verbose: If True, print detailed logs
         """
         super().__init__()
-        self.allowed_files = set(allowed_files)
+        self.allowed_files = set(allowed_files) if allowed_files else set()
+        self.allowed_dirs = set(allowed_dirs) if allowed_dirs else set()  # NEW FIX
         self.codebase_root = os.path.abspath(codebase_root)
         self.soft_mode = soft_mode
         self.verbose = verbose
 
         # Pre-compute absolute paths for efficiency
-        self.allowed_abs_paths = self._normalize_paths(allowed_files)
+        self.allowed_abs_paths = self._normalize_paths(list(self.allowed_files))
+        self.allowed_abs_dirs = self._normalize_paths(list(self.allowed_dirs))  # NEW FIX
 
     def _normalize_paths(self, paths: List[str]) -> Set[str]:
         """Normalize relative paths to absolute paths."""
@@ -263,17 +294,24 @@ class ToolCallValidationMiddleware(AgentMiddleware):
         Check if a path is allowed.
 
         Supports:
-        - Exact matches
-        - Sibling files in same directory (if parent is in allowed list)
-        - Files within allowed directories
+        - Exact matches on individual files
+        - Files within allowed directories (NEW FIX for new file creation)
+        - Sibling files in same directory as allowed file (NEW FIX)
         """
         abs_path = os.path.abspath(abs_path)
 
-        # Direct match
+        # Direct match on individual files
         if abs_path in self.allowed_abs_paths:
             return True
 
-        # Check if path is within an allowed directory
+        # NEW FIX: Check if path is within an allowed directory
+        for allowed_dir in self.allowed_abs_dirs:
+            if os.path.isdir(allowed_dir):
+                # Allow files directly in directory or subdirectories
+                if abs_path.startswith(allowed_dir + os.sep) or os.path.dirname(abs_path) == allowed_dir:
+                    return True
+
+        # Check if path is within an allowed directory (legacy check)
         for allowed in self.allowed_abs_paths:
             if os.path.isdir(allowed) and abs_path.startswith(allowed + os.sep):
                 return True
@@ -299,28 +337,52 @@ class ToolCallValidationMiddleware(AgentMiddleware):
             ToolMessage with result or error
         """
         try:
-            # Extract tool call information from request
-            tool_call = getattr(request, 'tool_call', {})
-            if hasattr(request, 'tool_calls') and request.tool_calls:
-                tool_call = request.tool_calls[0]  # Take first tool call
+            # FIX: Better extraction of tool call information from request
+            tool_call = None
+            tool_name = ""
+            args = {}
+            
+            # Try different ways to extract tool call based on LangChain structure
+            if hasattr(request, 'tool_call'):
+                tool_call = request.tool_call
+            elif hasattr(request, 'tool_calls') and request.tool_calls:
+                tool_call = request.tool_calls[0]
+            
+            if tool_call:
+                # Extract tool name
+                if isinstance(tool_call, dict):
+                    tool_name = tool_call.get("name", "") or tool_call.get("function", {}).get("name", "")
+                    # Extract arguments
+                    args = tool_call.get("arguments", {}) or tool_call.get("function", {}).get("arguments", {})
+                else:
+                    # If tool_call is an object
+                    tool_name = getattr(tool_call, "name", "") or getattr(tool_call, "function", {}).get("name", "")
+                    args = getattr(tool_call, "arguments", {}) or getattr(tool_call, "function", {}).get("arguments", {})
 
-            tool_name = tool_call.get("name", "") or tool_call.get("function", {}).get("name", "")
-
-            # Only validate file-modifying tools
-            if tool_name not in ["write_file", "edit_file", "create_file"]:
-                # For other tools, pass through
-                return handler(request)
-
-            # Extract file path from tool arguments
-            args = tool_call.get("arguments", {}) or tool_call.get("function", {}).get("arguments", {})
+            # Parse arguments if they're JSON string
             if isinstance(args, str):
                 import json
                 try:
                     args = json.loads(args)
                 except Exception:
-                    pass
+                    args = {}
 
-            file_path = args.get("path", "") or args.get("filePath", "") if isinstance(args, dict) else ""
+            # Only validate file-modifying tools
+            if tool_name not in ["write_file", "edit_file", "create_file"]:
+                # For other tools, pass through without validation
+                return handler(request)
+
+            # Extract file path - try multiple possible keys
+            file_path = ""
+            if isinstance(args, dict):
+                file_path = args.get("path") or args.get("filePath") or args.get("file_path") or ""
+
+            # FIX: Skip validation if file_path is empty (agent made mistake)
+            if not file_path or not file_path.strip():
+                if self.verbose:
+                    print(f"⚠️  Tool validation skipped: {tool_name} has empty file path")
+                # Allow execution - agent needs to fix their tool call
+                return handler(request)
 
             # Normalize to absolute path
             abs_path = os.path.abspath(os.path.join(self.codebase_root, file_path))
@@ -332,8 +394,10 @@ class ToolCallValidationMiddleware(AgentMiddleware):
                     f"Tool: {tool_name}\n"
                     f"Absolute path: {abs_path}\n"
                     f"\n"
-                    f"Allowed files/directories:\n"
-                    + "\n".join(f"  • {f}" for f in sorted(self.allowed_files)[:10])
+                    f"Allowed files:\n"
+                    + "\n".join(f"  • {f}" for f in sorted(self.allowed_files)[:5])
+                    + "\n\nAllowed directories:\n"
+                    + "\n".join(f"  • {d}" for d in sorted(self.allowed_dirs)[:5])
                 )
 
                 if self.verbose:
@@ -346,9 +410,10 @@ class ToolCallValidationMiddleware(AgentMiddleware):
                 else:
                     # Hard mode: block execution
                     print("🛑 HARD MODE: Blocking tool call")
+                    tool_id = tool_call.get("id", "unknown") if isinstance(tool_call, dict) else getattr(tool_call, "id", "unknown")
                     return ToolMessage(
                         content=error_msg,
-                        tool_call_id=tool_call.get("id", "unknown")
+                        tool_call_id=tool_id
                     )
 
             # Path is allowed, execute normally
@@ -361,12 +426,16 @@ class ToolCallValidationMiddleware(AgentMiddleware):
             # If anything goes wrong, safe-fail with error message
             tool_call_id = "unknown"
             if hasattr(request, 'tool_call'):
-                tool_call_id = request.tool_call.get("id", "unknown")
+                tool_call_id = getattr(request.tool_call, "id", "unknown") if not isinstance(request.tool_call, dict) else request.tool_call.get("id", "unknown")
             elif hasattr(request, 'tool_calls') and request.tool_calls:
-                tool_call_id = request.tool_calls[0].get("id", "unknown")
+                tc = request.tool_calls[0]
+                tool_call_id = getattr(tc, "id", "unknown") if not isinstance(tc, dict) else tc.get("id", "unknown")
 
             error_msg = f"❌ Tool validation error: {str(e)}"
-            print(error_msg)
+            if self.verbose:
+                print(error_msg)
+                import traceback
+                traceback.print_exc()
             return ToolMessage(
                 content=error_msg,
                 tool_call_id=tool_call_id
@@ -443,9 +512,14 @@ def _normalize_file_paths(
     affected_files: List[str],
     codebase_root: str,
     expand_scope: bool = True
-) -> List[str]:
+) -> tuple[List[str], List[str]]:
     """
     Normalize and expand file paths for guardrail scope.
+    
+    FIX for guardrail blocking issue:
+    - Return BOTH individual files AND their parent directories
+    - Allows new files to be created within allowed directories
+    - Previously only returned files, which blocked new file creation
 
     Args:
         affected_files: Relative or absolute file paths from Phase 3 analysis
@@ -453,9 +527,12 @@ def _normalize_file_paths(
         expand_scope: If True, auto-include sibling files in same directories
 
     Returns:
-        List of normalized absolute paths (deduplicated)
+        Tuple of (normalized_files, allowed_directories)
+        - normalized_files: List of individual file paths
+        - allowed_directories: List of directory paths where new files are allowed
     """
-    normalized = set()
+    normalized_files = set()
+    allowed_directories = set()  # NEW: Track directories for new file creation
 
     for f in affected_files:
         if not f or f == "TBD - to be determined by impact analysis":
@@ -468,15 +545,18 @@ def _normalize_file_paths(
             abs_path = os.path.abspath(os.path.join(codebase_root, f))
 
         if os.path.exists(abs_path):
-            normalized.add(abs_path)
+            normalized_files.add(abs_path)
+            
+            # FIX: Also extract parent directory to allow sibling files
+            parent_dir = os.path.dirname(abs_path)
+            if os.path.isdir(parent_dir):
+                allowed_directories.add(parent_dir)
 
             # Optional: expand scope to include sibling files in same directories
             if expand_scope:
-                parent_dir = os.path.dirname(abs_path)
-                # Check if this is a code directory (controller, service, model, etc.)
                 dir_name = os.path.basename(parent_dir).lower()
-
-                if any(x in dir_name for x in ["controller", "service", "model", "api", "handler", "component"]):
+                # Always expand scope if it's a code directory
+                if any(x in dir_name for x in ["controller", "service", "model", "api", "handler", "component", "java", "src"]):
                     try:
                         for sibling in os.listdir(parent_dir):
                             if sibling.startswith('.'):
@@ -484,11 +564,17 @@ def _normalize_file_paths(
                             sibling_path = os.path.join(parent_dir, sibling)
                             # Include other code files in same directory
                             if sibling.endswith((".java", ".py", ".ts", ".tsx", ".js", ".go", ".rb", ".kt")):
-                                normalized.add(sibling_path)
+                                normalized_files.add(sibling_path)
                     except (PermissionError, OSError):
                         pass  # Skip if can't list directory
+        else:
+            # FIX: Even if file doesn't exist, extract its parent directory
+            # This allows new files to be created in the same directory
+            parent_dir = os.path.dirname(abs_path)
+            if os.path.isdir(parent_dir):
+                allowed_directories.add(parent_dir)
 
-    return sorted(normalized)
+    return sorted(normalized_files), sorted(allowed_directories)
 
 
 def create_phase4_middleware(
@@ -513,6 +599,7 @@ def create_phase4_middleware(
 
     Implementation Notes:
     - Normalizes all file paths to absolute, deduplicated set
+    - FIX: Now extracts both files AND directories for proper validation
     - Optionally expands scope to sibling files (e.g., all files in a controller directory)
     - Can be disabled entirely for debugging via enable_guardrail=False
     - Logs guardrail scope for transparency
@@ -521,15 +608,22 @@ def create_phase4_middleware(
     if not affected_files or all(f == "TBD - to be determined by impact analysis" for f in affected_files):
         affected_files = [os.path.join(codebase_root, "src")]  # Fallback to src/ directory
 
-    # Normalize and optionally expand file paths
-    normalized_files = _normalize_file_paths(affected_files, codebase_root, expand_scope=expand_scope)
+    # FIX: _normalize_file_paths now returns tuple of (files, directories)
+    normalized_files, allowed_directories = _normalize_file_paths(affected_files, codebase_root, expand_scope=expand_scope)
 
     # Log guardrail scope for debugging
     print("✅ Guardrail Scope Configuration:")
-    for f in normalized_files[:5]:
-        print(f"  • {f}")
-    if len(normalized_files) > 5:
-        print(f"  ... and {len(normalized_files) - 5} more file(s)")
+    print(f"  📄 Allowed files: {len(normalized_files)} file(s)")
+    for f in normalized_files[:3]:
+        print(f"    • {f}")
+    if len(normalized_files) > 3:
+        print(f"    ... and {len(normalized_files) - 3} more")
+    
+    print(f"  📁 Allowed directories: {len(allowed_directories)} dir(s)")
+    for d in allowed_directories[:3]:
+        print(f"    • {d}")
+    if len(allowed_directories) > 3:
+        print(f"    ... and {len(allowed_directories) - 3} more")
 
     # Base middleware (always applied)
     middleware = [
@@ -540,10 +634,12 @@ def create_phase4_middleware(
     # Conditional: add guardrails only if enabled
     if enable_guardrail:
         middleware.extend([
-            FileScopeGuardrail(normalized_files),
-            ToolCallValidationMiddleware(normalized_files, codebase_root),
+            FileScopeGuardrail(normalized_files, soft_mode=False, verbose=True),  # Enable verbose for debugging
+            # FIX: Pass both files and directories to ToolCallValidationMiddleware
+            ToolCallValidationMiddleware(normalized_files, codebase_root, allowed_dirs=allowed_directories, 
+                                        soft_mode=False, verbose=True),  # Enable verbose for debugging
         ])
-        print("🛡️  Guardrails: ENABLED")
+        print("🛡️  Guardrails: ENABLED (with directory scope support)")
     else:
         print("⚠️  Guardrails: DISABLED (debug mode)")
 

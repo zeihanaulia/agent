@@ -6,7 +6,6 @@ Simplified version with proper argument handling and model setup.
 """
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -194,7 +193,10 @@ Your task:
 
 Generate production-grade code that fellow engineers would be proud to review.
 """
-    return create_deep_agent(system_prompt=prompt, model=analysis_model, backend=backend, middleware=middleware)
+    agent_kwargs = {"system_prompt": prompt, "model": analysis_model, "backend": backend}
+    if middleware is not None:
+        agent_kwargs["middleware"] = middleware
+    return create_deep_agent(**agent_kwargs)
 
 def create_execution_agent(codebase_path: str, dry_run: bool):
     """Phase 5: Execution & Verification"""
@@ -230,9 +232,10 @@ def run_context_analysis_phase(codebase_path: str) -> str:
                 return str(msg.content)
     return "Analysis failed."
 
-def run_intent_parsing_phase(feature_request: str, context: str) -> FeatureSpec:
+def run_intent_parsing_phase(feature_request: str, context: str, codebase_path: str) -> FeatureSpec:
     """Phase 2: Expert analysis - create implementation plan with reasoning and todo tracking"""
     print("🎯 Phase 2: Expert analysis - creating implementation plan...")
+    import os
     
     agent = create_intent_parser_agent()
     
@@ -286,10 +289,27 @@ Be specific about file paths and technical decisions.
                     r'(?:src/|\.?/)?[a-zA-Z0-9_\-./]*\.(?:java|py|js|go|ts|tsx|jsx|xml|gradle|properties|yml|yaml)',
                     content_str
                 )
-                affected_files.extend(file_matches)
+                # Validate each file match exists in codebase
+                for fm in file_matches:
+                    full_path = os.path.join(codebase_path, fm)
+                    if os.path.isfile(full_path):
+                        affected_files.append(fm)
     
     # Remove duplicates while preserving order
     affected_files = list(dict.fromkeys(affected_files))
+    
+    # If no valid files detected from model output, scan filesystem for actual files
+    if not affected_files:
+        java_files = []
+        java_src_path = os.path.join(codebase_path, "src/main/java")
+        if os.path.isdir(java_src_path):
+            for root, dirs, files in os.walk(java_src_path):
+                for file in files:
+                    if file.endswith(".java"):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, codebase_path)
+                        java_files.append(rel_path)
+        affected_files = java_files if java_files else []
     
     # Create FeatureSpec with analysis results
     spec = FeatureSpec(
@@ -322,27 +342,51 @@ def run_impact_analysis_phase(codebase_path: str, context: str, spec: FeatureSpe
     print("📊 Phase 3: Architecture analysis - identifying patterns and impact...")
     agent = create_impact_analysis_agent(codebase_path)
     
+    # Improved: Use actual codebase analysis to find real files
+    import os
+    
+    # Find Java files (for Spring Boot projects)
+    java_files = []
+    for root, dirs, files in os.walk(os.path.join(codebase_path, "src/main/java")):
+        for file in files:
+            if file.endswith(".java"):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, codebase_path)
+                java_files.append(rel_path)
+    
+    # Use real files detected from filesystem instead of invalid patterns from Phase 2
+    # This ensures we're working with actual Java files that exist
+    files_to_analyze = java_files if java_files else spec.affected_files
+    files_to_analyze = java_files if java_files else spec.affected_files
+    
     prompt = f"""
 FEATURE REQUEST: {spec.intent_summary}
+
+CODEBASE FILES DETECTED:
+{chr(10).join(f'• {f}' for f in files_to_analyze[:10])}
+{f'... and {len(files_to_analyze) - 10} more' if len(files_to_analyze) > 10 else ''}
 
 TASK: Conduct expert architecture analysis:
 
 1. **Current Architecture**: Analyze the existing code patterns, layers, and structure
 2. **Technology Stack**: Identify frameworks, libraries, and patterns in use
 3. **Design Patterns**: What patterns are already implemented? (MVC, Repository, Service, etc)
-4. **Affected Files**: List EXACTLY which files need modification with reasons
+4. **Affected Files**: From the list above, which files need modification? Be SPECIFIC with paths
 5. **Code Patterns**: Show specific code examples of patterns to follow
 6. **Dependencies**: List what's already available (no new dependencies!)
 7. **Testing Strategy**: How should the new code be tested?
 8. **Constraints**: Any limitations or best practices to follow?
 
 Use write_todos to plan the impact analysis tasks if needed.
-Be SPECIFIC - list file names, line numbers, and code patterns from the actual codebase.
+Be SPECIFIC - use exact file paths from the list above.
 """
     result = agent.invoke({"input": prompt})
     
+    # Extract files from agent response with better regex
+    files_to_modify = files_to_analyze if files_to_analyze else spec.affected_files
+    
     analysis = {
-        "files_to_modify": spec.affected_files,
+        "files_to_modify": files_to_modify,
         "architecture_insights": "",
         "patterns_to_follow": [],
         "testing_approach": "",
@@ -368,7 +412,7 @@ Be SPECIFIC - list file names, line numbers, and code patterns from the actual c
                 patterns = re.findall(r'(?:Pattern|pattern|Design|design):\s*([^,.\n]+)', content_str)
                 analysis["patterns_to_follow"].extend(patterns)
     
-    print(f"  ✓ Files to modify: {len(spec.affected_files)} file(s)")
+    print(f"  ✓ Files to modify: {len(files_to_modify)} file(s)")
     print(f"  ✓ Patterns identified: {len(analysis['patterns_to_follow'])} pattern(s)")
     print(f"  ✓ Analysis tasks: {len(analysis['todos'])} task(s)")
     
@@ -379,19 +423,23 @@ def run_code_synthesis_phase(codebase_path: str, context: str, spec: FeatureSpec
     """Phase 4: Expert code generation with testability and design patterns"""
     print("⚙️ Phase 4: Expert code generation with testability and SOLID principles...")
     
-    # Create middleware for Phase 4 agent
+    # Use files from impact analysis (Phase 3) instead of initial spec
+    # This ensures we're using the most accurate, filesystem-validated list
+    files_to_modify = impact.get("files_to_modify", spec.affected_files)
+    
+    # Create middleware for Phase 4 agent with ACTUAL files to modify
     middleware = create_phase4_middleware(
         feature_request=spec.intent_summary,
-        affected_files=spec.affected_files,
-        codebase_root=codebase_path
+        affected_files=files_to_modify,
+        codebase_root=codebase_path,
+        enable_guardrail=True  # FIX: Now guardrail should work with directory scope support
     )
     
     # Log middleware configuration
-    log_middleware_config(spec.intent_summary, spec.affected_files)
+    log_middleware_config(spec.intent_summary, files_to_modify)
     
     agent = create_code_synthesis_agent(codebase_path, middleware=middleware)
     
-    files_to_modify = impact.get("files_to_modify", spec.affected_files)
     architecture = impact.get("architecture_insights", "")[:500]
     
     # Multi-step expert implementation
@@ -557,7 +605,7 @@ def main():
             return
 
         # Phase 2-5: Feature implementation workflow
-        state.feature_spec = run_intent_parsing_phase(args.feature_request, state.context_analysis)
+        state.feature_spec = run_intent_parsing_phase(args.feature_request, state.context_analysis, codebase_path)
         state.impact_analysis = run_impact_analysis_phase(codebase_path, state.context_analysis, state.feature_spec)
         state.code_patches = run_code_synthesis_phase(codebase_path, state.context_analysis, 
                                                       state.feature_spec, state.impact_analysis)
