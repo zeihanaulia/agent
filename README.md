@@ -3,167 +3,138 @@
 
 Proyek ini berisi notebook, script, dan eksperimen untuk eksplorasi model dan agen (Hugging Face, Gradio, E2B, Deep Agents).
 
-## Daftar Notebook & Script
+## 🚀 Quick Start
 
-1. **Image Classification**
-   - Notebook: [notebooks/image_classification.ipynb](notebooks/image_classification.ipynb) — klasifikasi gambar (ViT).
-   - Gradio: [gradio/gradio_image_classification.py](gradio/gradio_image_classification.py)
-
-2. **Sentiment Analysis**
-   - Notebook: [notebooks/sentiment_analysis.ipynb](notebooks/sentiment_analysis.ipynb) — analisis sentimen.
-   - Gradio: [gradio/gradio_sentiment_analysis.py](gradio/gradio_sentiment_analysis.py)
-
-3. **Speech Recognition**
-   - Notebook: [notebooks/speech_recognition.ipynb](notebooks/speech_recognition.ipynb) — speech-to-text (Whisper).
-   - Gradio: [gradio/gradio_speech_recognition.py](gradio/gradio_speech_recognition.py)
-
-4. **Summarization**
-   - Notebook: [notebooks/summarization.ipynb](notebooks/summarization.ipynb) — ringkasan teks.
-   - Gradio: [gradio/gradio_summarization.py](gradio/gradio_summarization.py)
-
-5. **GPU Device Detection**
-   - Notebook: [notebooks/gpu_device_notebook.ipynb](notebooks/gpu_device_notebook.ipynb) — demo deteksi device.
-   - Gradio: [gradio/gradio_device_sentiment.py](gradio/gradio_device_sentiment.py)
-
-6. **E2B Code Runner**
-   - Script: [e2b_sandbox_runner.py](e2b_sandbox_runner.py)
-   - Notebook: [notebooks/e2b_sandbox_runner.ipynb](notebooks/e2b_sandbox_runner.ipynb)
-   - Gradio: [gradio/gradio_e2b_code_runner.py](gradio/gradio_e2b_code_runner.py)
-
-7. **Code Repair Agent**
-   - Gradio: [gradio/gradio_code_repair_agent.py](gradio/gradio_code_repair_agent.py)
-
-8. **Spring Boot Live Editor**
-   - Notes: [notes/experiment-template-build.md](notes/experiment-template-build.md)
-   - Notes: [notes/springboot_gradio_sandbox_preview_experiment.md](notes/springboot_gradio_sandbox_preview_experiment.md)
-    - Notes: [notes/e2b.experiment-template-build.md](notes/e2b.experiment-template-build.md)
-    - Notes: [notes/e2b.springboot_gradio_sandbox_preview_experiment.md](notes/e2b.springboot_gradio_sandbox_preview_experiment.md)
-   - Gradio: [gradio/gradio_springboot_generator.py](gradio/gradio_springboot_generator.py)
-   - Example project: [dataset/springboot-demo/](dataset/springboot-demo/)
-
-9. **Deep Agents Experiments**
-   - Gradio: [gradio/gradio_deepagent_experiments.py](gradio/gradio_deepagent_experiments.py) — eksperimen agen (basic, planning, subagents, filesystem, parallel) dengan streaming log.
-
-10. **Code Analysis Agent**
-    - Notebook: [notebooks/code_analysis_agent.ipynb](notebooks/code_analysis_agent.ipynb) — Tutorial lengkap AI-powered code analysis menggunakan DeepAgents + FilesystemBackend.
-    - Script: [scripts/code_analysis.py](scripts/code_analysis.py) — Script CLI untuk code analysis agent.
-
-## TODO / Coding-agent baseline
-
-Rencana awal untuk coding-agent: "generate → build → test → repair" otomatis.
-
-- Reusable components: [notes/springboot_gradio_sandbox_preview_experiment.md](notes/springboot_gradio_sandbox_preview_experiment.md).
- - Reusable components: [notes/e2b.springboot_gradio_sandbox_preview_experiment.md](notes/e2b.springboot_gradio_sandbox_preview_experiment.md).
-- Target awal:
-  - Persistent build sandbox (cache `~/.m2`).
-  - `build_and_test_once(sandbox, project_dir)` mengembalikan struktur hasil (success, logs, errors, artifact_path).
-  - Parser sederhana untuk mengekstrak error kompilasi dari output Maven.
-  - Repair loop API: jalankan build → kirim errors ke agent → terapkan patch → ulangi.
-
-Jika mau, saya bisa mulai mengimplementasikan helper module untuk ini.
-
-## Notes
-
-Berikut catatan dan eksperimen di folder `notes/`, dikelompokkan per topik. Jika ingin saya ubah nama file (prefix seperti `e2b.` / `huggingface.` / `deepagents.`) beri tahu dan saya akan melakukan rename + update tautan.
-
-### Code Analysis (filesystem backend & agent implementation)
-
-1. [Code Analysis Guide](notes/codeanalysis.guide.md) — Panduan lengkap untuk code analysis agent dengan FilesystemBackend.
-2. [Filesystem Backend Index](notes/codeanalysis.filesystem-backend-index.md) — Daftar lengkap dokumentasi FilesystemBackend implementation.
-3. [Filesystem Backend Implementation Guide](notes/codeanalysis.filesystem-backend-implementation-guide.md) — Panduan implementasi FilesystemBackend dari awal.
-4. [Filesystem Backend Migration Summary](notes/codeanalysis.filesystem-backend-migration-summary.md) — Ringkasan migrasi dari custom tools ke FilesystemBackend.
-5. [Filesystem Backend Quick Reference](notes/codeanalysis.filesystem-backend-quick-reference.md) — Referensi cepat untuk FilesystemBackend API dan tools.
-6. [Filesystem Backend Summary](notes/codeanalysis.filesystem-backend-summary.md) — Ringkasan implementasi dan hasil testing FilesystemBackend.
-7. [Filesystem Backend Temperature Bugfix](notes/codeanalysis.filesystem-backend-temperature-bugfix.md) — Dokumentasi perbaikan bug temperature compatibility.
-8. [Filesystem Backend Debugging](notes/codeanalysis.filesystem-backend-debugging.md) — Catatan debugging dan troubleshooting FilesystemBackend.
-9. [Filesystem Backend Resolution](notes/codeanalysis.filesystem-backend-resolution.md) — Resolusi masalah dan solusi yang diterapkan.
-10. [Filesystem Backend Files Created](notes/codeanalysis.filesystem-backend-files-created.md) — Daftar file dokumentasi yang dibuat selama implementasi.
-11. [Filesystem Backend Pending Fix](notes/codeanalysis.filesystem-backend-pending-fix.md) — Catatan masalah yang masih pending (jika ada).
-12. [Filesystem Backend Comparison](notes/codeanalysis.filesystem-backend-comparison.md) — Perbandingan FilesystemBackend vs custom tools.
-13. [Builtin vs Custom Tools Comparison](notes/builtin-vs-custom-tools-comparison.md) — Analisis perbandingan tools built-in vs custom.
-14. [CodeAnalysis: Builtin vs Custom Tools](notes/codeanalysis.builtin-vs-custom-tools-comparison.md) — Perbandingan spesifik untuk code analysis tools.
-
-### E2B (sandbox / execution)
-
-1. [Introducing E2B Sandbox](notes/e2b.introducing_e2b_sandbox.md) — Panduan E2B: lifecycle sandbox, templates, streaming execution.
-2. [Experiment: Membuat template Spring Boot dan menjalankan build](notes/e2b.experiment-template-build.md) — Membuat template Spring Boot dan alur build/run.
-3. [Spring Boot + E2B Sandbox + Gradio Preview (experiment)](notes/e2b.springboot_gradio_sandbox_preview_experiment.md) — Live preview & streaming build logs (Spring Boot + E2B + Gradio).
-
-### Hugging Face (models & Gradio)
-
-1. [Introducing Hugging Face](notes/huggingface.introducing_hugging_face.md) — Intro ke Transformers, model hub, dan contoh Gradio UIs.
-
-### Deep Agents (agent architecture & experiments)
-
-1. [Deep Agents: Introduction & Learning Notes](notes/deepagents.deep_agents_notes.md) — Catatan arsitektur Deep Agents: planning, subagents, filesystem middleware, eksperimen.
-
-## Requirements
-
-Install dependencies:
+### Prerequisites
 ```bash
 pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate
 ```
 
-Untuk fitur E2B (Code Runner & Code Repair Agent):
+### Available Experiments
+
+| Category | Notebook | Gradio App | Description |
+|----------|----------|------------|-------------|
+| **ML Basics** | [Image Classification](notebooks/image_classification.ipynb) | [gradio_image_classification.py](gradio/gradio_image_classification.py) | ViT image classification |
+| | [Sentiment Analysis](notebooks/sentiment_analysis.ipynb) | [gradio_sentiment_analysis.py](gradio/gradio_sentiment_analysis.py) | Text sentiment analysis |
+| | [Speech Recognition](notebooks/speech_recognition.ipynb) | [gradio_speech_recognition.py](gradio/gradio_speech_recognition.py) | Whisper speech-to-text |
+| | [Summarization](notebooks/summarization.ipynb) | [gradio_summarization.py](gradio/gradio_summarization.py) | Text summarization |
+| **AI Agents** | [Code Analysis](notebooks/code_analysis_agent.ipynb) | [gradio_code_analysis_repo.py](gradio/gradio_code_analysis_repo.py) | DeepAgents + FilesystemBackend |
+| | [Deep Agents](notebooks/deep_agents_experiments.ipynb) | [gradio_deepagent_experiments.py](gradio/gradio_deepagent_experiments.py) | Agent architecture experiments |
+| | [Code Repair Agent](-) | [gradio_code_repair_agent.py](gradio/gradio_code_repair_agent.py) | AI-powered code repair |
+| | [E2B Code Runner](notebooks/e2b_sandbox_runner.ipynb) | [gradio_e2b_code_runner.py](gradio/gradio_e2b_code_runner.py) | Sandbox code execution |
+| **Advanced** | [GPU Device](notebooks/gpu_device_notebook.ipynb) | [gradio_device_sentiment.py](gradio/gradio_device_sentiment.py) | Device detection |
+| | [Spring Boot Generator](notebooks/spring_boot_generator.ipynb) | [gradio_springboot_generator.py](gradio/gradio_springboot_generator.py) | Live Spring Boot editor |
+| | [Spring Boot Generator Fixed](notebooks/spring_boot_generator_fixed.ipynb) | - | Improved Spring Boot generator |
+
+### Running Examples
+```bash
+# Basic ML demos
+python gradio/gradio_image_classification.py
+python gradio/gradio_sentiment_analysis.py
+
+# AI Agents
+python scripts/code_analysis.py --codebase-path /your/project
+python gradio/gradio_code_analysis_repo.py
+python gradio/gradio_deepagent_experiments.py
+python gradio/gradio_code_repair_agent.py
+python gradio/gradio_e2b_code_runner.py
+
+# Advanced experiments
+python gradio/gradio_device_sentiment.py
+```
+
+## 📚 Learning Path
+
+Repositori ini dirancang sebagai **educational resource**. Ikuti progression dari basic ML sampai advanced AI agents:
+
+**Level 1: ML Basics (2-3 jam)**
+→ Hugging Face pipelines → Basic notebooks → Gradio interfaces
+
+**Level 2: Agent Fundamentals (3-4 jam)**  
+→ Deep Agents intro → Code analysis agent → FilesystemBackend
+
+**Level 3: Advanced Execution (4-5 jam)**
+→ E2B sandbox → Code execution → Template building
+
+**Level 4: Agent Architecture (5-6 jam)**
+→ Middleware → Multi-phase agents → Production patterns
+
+**📖 Full Documentation**: [Learning Path Guide](notes/README.md) | [Category Indexes](notes/)
+
+## 🛠️ Advanced Setup
+
+### E2B Integration
 ```bash
 pip install e2b e2b-code-interpreter
-export E2B_API_KEY="your_api_key_here"
+export E2B_API_KEY="your_key"
 ```
 
-Untuk Code Analysis Agent (DeepAgents + FilesystemBackend):
+### Code Analysis Agent
 ```bash
 pip install deepagents langchain-openai python-dotenv pydantic
-export LITELLM_MODEL="gpt-4o-mini"  # atau model lain
-export LITELLM_VIRTUAL_KEY="your_api_key"
-export LITELLM_API="https://api.openai.com/v1"  # atau endpoint lain
+export LITELLM_MODEL="gpt-4o-mini"
+export LITELLM_VIRTUAL_KEY="your_key"
 ```
 
-Direkomendasikan: Python 3.10+. Buat virtualenv sebelum instalasi:
+### Development
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+# GPU support (optional)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Model cache
+export HF_TOKEN="your_huggingface_token"  # For private models
 ```
 
-## Cara Menjalankan
+## Key Features
 
-1. Aktifkan virtualenv (jika ada): `source .venv/bin/activate`
-2. Jalankan notebook atau skrip Gradio. Contoh Gradio:
+- **Educational Structure**: 5-level learning progression dari beginner sampai advanced
+- **Production Ready**: LangChain DeepAgents, E2B sandbox, Hugging Face integration
+- **Interactive Demos**: 10+ Gradio web interfaces untuk experimentation
+- **Comprehensive Docs**: 25+ documentation files dengan cross-references
+- **Modular Architecture**: Independent experiments yang bisa dijalankan separately
 
-```bash
-python gradio/gradio_image_classification.py
-python gradio/gradio_e2b_code_runner.py
-python gradio/gradio_code_repair_agent.py
-python gradio/gradio_deepagent_experiments.py
+## Project Structure
+
+```
+├── notebooks/          # Jupyter notebooks (educational)
+├── gradio/            # Interactive web demos
+├── scripts/           # CLI tools & agents
+├── dataset/           # Sample data & codebases
+├── notes/             # Documentation (indexed by category)
+└── requirements.txt   # Python dependencies
 ```
 
-3. Untuk Code Analysis Agent:
+## Troubleshooting
 
-```bash
-# Jalankan notebook (recommended untuk learning)
-jupyter notebook notebooks/code_analysis_agent.ipynb
+- **Model Download Issues**: Check internet connection, use `HF_TOKEN` for private models
+- **CUDA/GPU Problems**: Install CPU-only torch if GPU unavailable: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+- **E2B Errors**: Verify `E2B_API_KEY` is set correctly
+- **Memory Issues**: Use smaller models or reduce batch sizes in notebooks
 
-# Atau jalankan script CLI
-python scripts/code_analysis.py --codebase-path /path/to/codebase
-```
+## Roadmap
 
-Gradio biasanya tersedia di http://127.0.0.1:7860
+### Current Focus: Coding Agent Baseline
+"Generate → Build → Test → Repair" automated pipeline:
 
-## Model Download & Cache
+- ✅ **Generate**: Feature request → code implementation (Phase 4 agent)
+- 🚧 **Build**: Persistent sandbox dengan Maven cache (`~/.m2`)
+- 🚧 **Test**: Automated testing dalam sandbox environment  
+- 🚧 **Repair**: Error parsing → agent-driven fixes
 
-Model yang digunakan otomatis didownload ke `~/.cache/huggingface/hub/`.
-Hapus cache jika perlu: `rm -rf ~/.cache/huggingface/hub/`
+### Target Components
+- `build_and_test_once(sandbox, project_dir)` → structured results
+- Maven error parser untuk compilation failures
+- Repair loop: build → parse errors → agent fix → retry
 
-Set `HF_TOKEN` jika akses model private atau ingin mengurangi rate limits:
-```bash
-export HF_TOKEN="hf_xxx"
-```
+## Contributing
 
-## Troubleshooting (singkat)
+Repository ini educational - contributions untuk:
+- New experiment notebooks
+- Documentation improvements  
+- Bug fixes dan enhancements
+- Additional model integrations
 
-- Model download gagal: periksa koneksi dan disk.
-- CUDA/GPU issues: pastikan versi `torch` kompatibel atau gunakan CPU build di macOS.
-- E2B: pastikan `E2B_API_KEY` benar.
+## License
 
-## Kontribusi & Lisensi
-
-Pertimbangkan menambahkan `LICENSE` dan `CONTRIBUTING.md` jika repo akan dibagikan publik.
+Consider adding LICENSE and CONTRIBUTING.md for public sharing.
