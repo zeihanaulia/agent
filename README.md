@@ -62,7 +62,50 @@ python gradio/gradio_image_classification.py
 - 🚧 **Test**: Automated testing dalam sandbox environment
 - 🚧 **Repair**: Error parsing → agent-driven fixes
 
-## 📞 Contributing
+## Token Optimization Implementation (Tomorrow)
+
+**Goal: Reduce token usage by 56% for large project scalability**
+
+### Phase 1: Quick Wins (1 week, -38% tokens)
+- [ ] Implement context pruning in phase transitions
+  - Remove duplicate context_analysis data passed to each phase
+  - Add context deduplication before phase execution
+- [ ] Add caching for repeated context retrieval
+  - Cache file contents and analysis results
+  - Implement LRU cache with configurable size limits
+- [ ] Test with existing Test 3 scenario
+  - Validate 30-40% token reduction achieved
+  - Ensure no regression in feature functionality
+
+### Phase 2: Enhanced Filtering (1 week, -18% additional tokens)
+- [ ] Implement semantic file filtering
+  - Analyze only relevant files based on feature request context
+  - Skip unrelated files (tests, docs, config) unless specifically requested
+- [ ] Add selective analysis for large codebases
+  - Focus analysis on modified/changed files
+  - Implement dependency-aware filtering
+- [ ] Validate with large project simulation
+  - Test with Casdoor-like codebase (300+ files)
+  - Confirm token usage stays under 500K threshold
+
+### Phase 3: Advanced Optimizations (2 weeks, -15% additional tokens)
+- [ ] Implement RAG backend for context retrieval
+  - Replace full context passing with semantic retrieval
+  - Use vector embeddings for relevant code chunk retrieval
+- [ ] Add message compression strategies
+  - Compress repeated patterns in context
+  - Implement hierarchical context summarization
+- [ ] Final validation and benchmarking
+  - Re-run all Test 1-3 scenarios
+  - Document final token usage metrics
+
+**Success Criteria:**
+- 56% total token reduction achieved
+- Large projects (300+ files) remain under 500K tokens
+- No regression in agent functionality
+- All E2B tests continue to pass
+
+## Contributing
 
 Repository ini educational - contributions untuk:
 - New experiment notebooks (following phase progression)
