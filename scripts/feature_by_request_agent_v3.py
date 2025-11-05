@@ -34,6 +34,39 @@ except ImportError:
     def log_middleware_config(*args, **kwargs):
         pass
 
+# Import framework instructions for framework-aware code generation
+try:
+    from framework_instructions import detect_framework, get_instruction, FrameworkInstruction  # pyright: ignore[reportAssignmentType]
+    HAS_FRAMEWORK_INSTRUCTIONS = True
+except ImportError:
+    HAS_FRAMEWORK_INSTRUCTIONS = False
+    
+    # Define minimal stub for FrameworkInstruction
+    class FrameworkInstruction:  # type: ignore[no-redef]
+        def get_system_prompt(self) -> str:
+            return ""
+        def get_layer_mapping(self) -> Dict[str, str]:
+            return {}
+        def get_file_patterns(self) -> Dict[str, str]:
+            return {}
+    
+    # Define stubs if framework instructions not available
+    def detect_framework(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+    def get_instruction(*args, **kwargs) -> FrameworkInstruction | None:  # type: ignore[name-defined]
+        return None
+
+# Import structure validator for architecture assessment
+try:
+    from structure_validator import validate_structure as validate_project_structure  # pyright: ignore[reportAssignmentType]
+    HAS_STRUCTURE_VALIDATOR = True
+except ImportError:
+    HAS_STRUCTURE_VALIDATOR = False
+    
+    def validate_project_structure(*args, **kwargs):  # type: ignore[no-untyped-def]
+        """Stub when structure_validator not available"""
+        return None
+
 # Load environment variables
 load_dotenv()
 
@@ -57,12 +90,14 @@ class AgentState(TypedDict):
     context_analysis: Optional[str]
     feature_spec: Optional[FeatureSpec]
     impact_analysis: Optional[Dict[str, Any]]
+    structure_assessment: Optional[Dict[str, Any]]
     code_patches: Optional[List[Dict[str, Any]]]
     execution_results: Optional[Dict[str, Any]]
     errors: List[str]
     dry_run: bool
     current_phase: str
     human_approval_required: bool
+    framework: Optional[str]
 
 # ==============================================================================
 # PARSE ARGUMENTS FIRST
@@ -368,6 +403,18 @@ def parse_intent(state: AgentState) -> AgentState:
         state["errors"].append("No feature request provided")
         return state
 
+    # DETECT FRAMEWORK EARLY - helps with intent parsing
+    detected_framework = None
+    if HAS_FRAMEWORK_INSTRUCTIONS:
+        detected_framework = detect_framework(codebase_path)
+        if detected_framework:
+            _framework_instruction = get_instruction(detected_framework)  # Get but don't store (not serializable)
+            print(f"  🔍 Framework detected: {detected_framework}")
+        else:
+            print("  ℹ️  No specific framework detected, using generic patterns")
+    
+    state["framework"] = detected_framework
+
     agent = create_intent_parser_agent()
 
     prompt = f"""
@@ -465,6 +512,104 @@ Be specific about file paths and technical decisions.
 
     return state
 
+def validate_structure(state: AgentState) -> AgentState:
+    """Node: Structure Validation Phase (NEW Phase 2A)
+    
+    Validates project structure against framework best practices.
+    Identifies violations and prepares refactoring strategy.
+    """
+    print("🏗️ Phase 2A: Validating project structure against best practices...")
+    
+    codebase_path = state["codebase_path"]
+    framework_type = state.get("framework")
+    
+    if not HAS_STRUCTURE_VALIDATOR:
+        print("  ℹ️  Structure validator not available, skipping validation")
+        state["structure_assessment"] = None
+        state["current_phase"] = "structure_validation_skipped"
+        return state
+    
+    try:
+        # Convert FrameworkType to string if needed
+        framework_name = None
+        if framework_type:
+            # Handle both enum and string
+            if isinstance(framework_type, str):
+                framework_name = framework_type
+            elif hasattr(framework_type, 'name'):
+                framework_name = framework_type.name  # type: ignore[union-attr]
+            elif hasattr(framework_type, 'value'):
+                framework_name = framework_type.value  # type: ignore[union-attr]
+            else:
+                framework_name = str(framework_type)
+        
+        # Validate project structure
+        assessment = validate_project_structure(
+            codebase_path=codebase_path,
+            framework=framework_name
+        )
+        
+        if not assessment:
+            print("  ℹ️  No assessment available")
+            state["structure_assessment"] = None
+            return state
+        
+        # Convert dataclass to dict for JSON serialization
+        assessment_dict = {
+            "is_production_ready": assessment.is_production_ready,
+            "framework": assessment.framework,
+            "score": assessment.score,
+            "summary": assessment.summary,
+            "violations": [
+                {
+                    "type": v.violation_type,
+                    "location": v.location,
+                    "severity": v.severity,
+                    "message": v.message,
+                    "suggested_fix": v.suggested_fix
+                }
+                for v in (assessment.violations if assessment.violations else [])
+            ],
+            "refactoring_plan": None
+        }
+        
+        # Add refactoring plan if present
+        if assessment.refactoring_plan:
+            plan = assessment.refactoring_plan
+            assessment_dict["refactoring_plan"] = {
+                "create_layers": plan.create_layers,
+                "extract_classes": plan.extract_classes,
+                "move_code": plan.move_code,
+                "add_annotations": plan.add_annotations,
+                "effort_level": plan.effort_level,
+                "estimated_time": plan.estimated_time
+            }
+        
+        state["structure_assessment"] = assessment_dict
+        state["current_phase"] = "structure_validation_complete"
+        
+        # Print results
+        violations_list = assessment.violations if assessment.violations else []
+        if violations_list:
+            print(f"  ⚠️  Found {len(violations_list)} structure violation(s)")
+            for v in violations_list[:3]:
+                print(f"    - [{v.severity}] {v.violation_type}: {v.message[:60]}...")
+            if len(violations_list) > 3:
+                print(f"    ... and {len(violations_list) - 3} more")
+        else:
+            print("  ✓ No structure violations found")
+        
+        print(f"  📊 Compliance score: {assessment.score:.1f}/100")
+        print(f"  🔍 Status: {'✓ Production-ready' if assessment.is_production_ready else '⚠️  Needs refactoring'}")
+        
+        return state
+        
+    except Exception as e:
+        print(f"  ❌ Structure validation error: {e}")
+        state["errors"].append(f"Structure validation error: {str(e)}")
+        state["structure_assessment"] = None
+        return state
+
 def analyze_impact(state: AgentState) -> AgentState:
     """Node: Impact Analysis Phase"""
     print("📊 Phase 3: Architecture analysis - identifying patterns and impact...")
@@ -557,33 +702,150 @@ def synthesize_code(state: AgentState) -> AgentState:
     codebase_path = state["codebase_path"]
     spec = state.get("feature_spec")
     impact = state.get("impact_analysis", {})
+    structure_assessment = state.get("structure_assessment")
+    framework_type = state.get("framework")
 
     if not spec or not impact:
         state["errors"].append("Missing feature spec or impact analysis")
         return state
 
+    # USE STRUCTURE ASSESSMENT TO CREATE MISSING LAYERS
+    refactoring_note = ""
+    if structure_assessment and not state.get("dry_run"):
+        violations = structure_assessment.get("violations", [])
+        refactoring_plan = structure_assessment.get("refactoring_plan")
+        
+        if violations or refactoring_plan:
+            print("  🔧 Creating missing directory layers...")
+            
+            # Determine base package path for Java project
+            base_package_path = "src/main/java/com/example/springboot"
+            
+            # Extract directories to create from violations and plan
+            dirs_to_create = []
+            
+            # From violations: extract layer names
+            for v in violations:
+                if v.get("type") == "missing_layer":
+                    # Extract layer name from message
+                    # Example: "Missing controller/ directory for..."
+                    import re
+                    match = re.search(r"'(\w+)/'", v.get("message", ""))
+                    if match:
+                        layer_name = match.group(1)
+                        layer_path = os.path.join(codebase_path, base_package_path, layer_name)
+                        if layer_path not in dirs_to_create:
+                            dirs_to_create.append(layer_path)
+            
+            # From refactoring plan: use layer names (assume they're relative to base package)
+            if refactoring_plan:
+                for layer_name in refactoring_plan.get("create_layers", []):
+                    # layer_name could be just "controller" or "src/.../controller"
+                    # Normalize it to just the layer name
+                    layer_basename = os.path.basename(layer_name.rstrip("/"))
+                    layer_path = os.path.join(codebase_path, base_package_path, layer_basename)
+                    if layer_path not in dirs_to_create:
+                        dirs_to_create.append(layer_path)
+            
+            # Create directories
+            for dir_path in dirs_to_create:
+                try:
+                    os.makedirs(dir_path, exist_ok=True)
+                    print(f"    ✓ Created: {os.path.relpath(dir_path, codebase_path)}")
+                except Exception as e:
+                    print(f"    ❌ Failed to create {os.path.basename(dir_path)}: {e}")
+                    state["errors"].append(f"Failed to create directory: {str(e)}")
+            
+            # Build refactoring instruction for LLM
+            if violations:
+                refactoring_note = f"""
+STRUCTURE REFACTORING REQUIRED:
+Current compliance score: {structure_assessment.get("score", 0)}/100
+Violations found: {len(violations)}
+
+REFACTORING STRATEGY:
+{refactoring_plan.get("effort_level", "medium") if refactoring_plan else "medium"} effort required
+
+Create files in proper layers:
+- controller/ directory: HTTP handlers (already created)
+- service/ directory: Business logic (already created)
+- repository/ directory: Data access layer (already created)
+- dto/ directory: Data transfer objects (already created)
+- model/ directory: Domain entities (already created)
+
+Generate code that SEPARATES concerns into these layers.
+"""
+                print(f"  📝 Refactoring strategy: {len(violations)} violations to address")
+
     # Use files from impact analysis
     files_to_modify = impact.get("files_to_modify", spec.affected_files)
+    
+    # Build list of layer directories for middleware scope
+    layer_dirs_to_allow = []
+    if structure_assessment and not state.get("dry_run"):
+        base_package_path = "src/main/java/com/example/springboot"
+        # These are relative paths from codebase_root
+        layer_dirs_to_allow = [
+            os.path.join(base_package_path, layer)
+            for layer in ["controller", "service", "repository", "dto", "model"]
+        ]
+    
+    # Combine files_to_modify with layer directories for middleware
+    files_for_middleware = list(files_to_modify) + layer_dirs_to_allow
 
     # CRITICAL: Pass BOTH files AND feature_request to agent so it can apply middleware guardrails
     agent = create_code_synthesis_agent(
         codebase_path, 
-        files_to_modify=files_to_modify,
+        files_to_modify=files_for_middleware,  # Include layer dirs for middleware scope
         feature_request=spec.intent_summary  # <-- PASS FEATURE REQUEST HERE
     )
     
     # Log middleware configuration for debugging
     if HAS_MIDDLEWARE:
-        log_middleware_config(spec.intent_summary, files_to_modify)
+        log_middleware_config(spec.intent_summary, files_for_middleware)
 
     architecture = impact.get("architecture_insights", "")[:500]
 
     # Multi-step expert implementation
     print("  📋 Step 1: Agent analyzing code patterns and planning implementation...")
+    
+    # BUILD FRAMEWORK-AWARE PROMPT
+    framework_prompt = ""
+    if framework_type and HAS_FRAMEWORK_INSTRUCTIONS:
+        # Re-fetch instruction for code generation (not stored in state to avoid serialization issues)
+        try:
+            framework_instruction = get_instruction(framework_type)
+            if framework_instruction:
+                system_prompt_text = framework_instruction.get_system_prompt()
+                layer_mapping_text = "\n".join(
+                    f"- {k}: {v}" for k, v in framework_instruction.get_layer_mapping().items()
+                )
+                file_patterns_text = "\n".join(
+                    f"- {k}: {v}" for k, v in framework_instruction.get_file_patterns().items()
+                )
+                framework_prompt = f"""
+FRAMEWORK-SPECIFIC GUIDELINES:
+{system_prompt_text}
+
+FRAMEWORK LAYER MAPPING:
+{layer_mapping_text}
+
+FILE NAMING PATTERNS:
+{file_patterns_text}
+
+"""
+                print(f"  🏗️  Using {framework_type} best practices for code generation")
+        except Exception:  # If framework instruction fails, continue without it
+            pass
+    
     analysis_prompt = f"""
 FEATURE REQUEST: {spec.intent_summary}
 
 FILES TO MODIFY: {', '.join(files_to_modify[:3])}
+
+{framework_prompt}
+
+{refactoring_note}
 
 STEP 1: ANALYSIS & PLANNING
 
@@ -607,9 +869,62 @@ Be thorough in understanding before planning implementation.
 
     # Step 2: Agent implements based on plan - EXACT v2 prompt for consistency
     print("  🛠️  Step 2: Agent implementing changes...")
+    
+    # Build layer-aware implementation guidance
+    layer_guidance = ""
+    if refactoring_note:
+        layer_guidance = """
+LAYERED ARCHITECTURE REQUIREMENTS:
+Your task is to CREATE NEW FILES in the layer directories for separation of concerns:
+
+📦 MODEL LAYER (src/main/java/com/example/springboot/model/):
+   - ORDER ENTITY: Order.java - JPA entity with @Entity, @Table("orders")
+   - Package: com.example.springboot.model
+   - Fields: id (auto-generated), product_name, quantity, price, created_at
+   - Use @Column annotations for mapping
+
+📦 DTO LAYER (src/main/java/com/example/springboot/dto/):
+   - OrderDTO.java - Data Transfer Object for responses
+   - OrderRequest.java - Request DTO for creation/updates
+   - Package: com.example.springboot.dto
+   - Setters/getters, no business logic
+
+📦 REPOSITORY LAYER (src/main/java/com/example/springboot/repository/):
+   - OrderRepository.java - Interface extending JpaRepository
+   - Package: com.example.springboot.repository
+   - Methods: findById, findAll, save, delete (inherited from JpaRepository)
+   - Mark with @Repository annotation
+
+📦 SERVICE LAYER (src/main/java/com/example/springboot/service/):
+   - OrderService.java - Business logic implementation
+   - Package: com.example.springboot.service
+   - Methods: createOrder(), getOrderById(), getAllOrders(), deleteOrder()
+   - Use @Service annotation, @Autowired for OrderRepository dependency
+
+📦 CONTROLLER LAYER (src/main/java/com/example/springboot/controller/):
+   - OrderController.java - REST API endpoints
+   - Package: com.example.springboot.controller
+   - Endpoints: POST /api/orders, GET /api/orders/{id}, GET /api/orders, DELETE /api/orders/{id}
+   - Use @RestController, @RequestMapping("/api/orders")
+
+IMPORTANT:
+- Use write_file to CREATE NEW FILES in the layer directories above
+- Each file must have its correct package declaration
+- Use proper Spring Boot annotations (@Entity, @Repository, @Service, @RestController)
+- Follow existing code style from HelloController
+- Files MUST be created in their respective layer directories, not the root package
+
+DO NOT modify HelloController unless absolutely necessary.
+CREATE the new layer files NOW.
+"""
+    
     implementation_prompt = f"""
 FEATURE: {spec.intent_summary}
 FILES: {', '.join(files_to_modify[:3])}
+
+{framework_prompt}
+
+{layer_guidance}
 
 STEP 2: IMPLEMENTATION
 
@@ -629,39 +944,70 @@ NOW implement the changes using write_file and edit_file tools:
    - Add meaningful comments for complex logic
    - Ensure code compiles immediately
 
-3. IMPLEMENTATION FOCUS:
-   - Modify HelloController.java to add the new endpoint
-   - Follow existing endpoint patterns (use @GetMapping, @RestController, etc)
-   - Return proper JSON responses
-   - Use services/interfaces for business logic
+3. LAYER-AWARE IMPLEMENTATION:
+   - If layer directories exist (controller/, service/, etc), CREATE files in those directories
+   - Controller: HTTP handlers only (@RestController, @Mapping endpoints)
+   - Service: Business logic (@Service, has methods for operations)
+   - Repository: Data access (@Repository, extends JpaRepository)
+   - DTO: Data transfer objects (plain classes for API contracts)
+   - Model: Domain entities (@Entity, @Table for database)
+   - Use @Autowired for dependency injection between layers
 
 4. SPECIFIC REQUIREMENTS:
    - Feature request: {spec.intent_summary}
    - Use only Spring Boot starter-web and starter-test (already in pom.xml)
    - Code must be production-ready and testable
 
-Use edit_file for HelloController and write_file for any new service files.
+Use write_file to create new service/repository/dto/model files in proper directories.
+Use edit_file only for HelloController if absolutely necessary.
 Generate the actual code implementation NOW.
 """
 
     result2 = agent.invoke({"input": implementation_prompt})
 
-    # Extract patches from implementation step
+
+    # Extract patches from implementation step with validation
     patches = []
     if "messages" in result2:
         for msg in result2.get("messages", []):
             if hasattr(msg, "tool_calls"):
                 for call in getattr(msg, "tool_calls", []):
                     if call.get("name") in ["write_file", "edit_file"]:
-                        # Extract path from either 'path' or 'file' key
+                        # Extract and validate patch arguments
                         tool_args = call.get("args", {})
-                        file_path = tool_args.get("path") or tool_args.get("file") or "unknown"
-                        patches.append({
-                            "tool": call.get("name"),
-                            "args": tool_args,
-                            "description": "Generated patch",
-                            "file": file_path
-                        })
+                        tool_name = call.get("name")
+                        file_path = tool_args.get("path") or tool_args.get("file")
+                        
+                        # Validate patch has required content
+                        if tool_name == "write_file":
+                            # write_file must have path AND content
+                            content = tool_args.get("content", "")
+                            if file_path and content and len(content.strip()) > 0:
+                                patches.append({
+                                    "tool": tool_name,
+                                    "args": tool_args,
+                                    "description": "Generated file",
+                                    "file": file_path
+                                })
+                            elif not file_path:
+                                print("    ⚠️  Skipped write_file with missing path")
+                            elif not content:
+                                print(f"    ⚠️  Skipped write_file with empty content: {file_path}")
+                        elif tool_name == "edit_file":
+                            # edit_file must have path AND oldString AND newString
+                            old_string = tool_args.get("oldString", "")
+                            new_string = tool_args.get("newString", "")
+                            if file_path and old_string and new_string:
+                                patches.append({
+                                    "tool": tool_name,
+                                    "args": tool_args,
+                                    "description": "Modified file",
+                                    "file": file_path
+                                })
+                            elif not file_path:
+                                print("    ⚠️  Skipped edit_file with missing path")
+                            elif not old_string or not new_string:
+                                print(f"    ⚠️  Skipped edit_file missing oldString/newString: {file_path}")
 
     # Always print agent response for debugging
     if "messages" in result2:
@@ -719,15 +1065,69 @@ def execute_changes(state: AgentState, enable_human_loop: bool = False) -> Agent
     mode = "DRY RUN" if dry_run else "EXECUTE"
     print(f"  ℹ️ {mode}: Applying {len(patches)} patch(es)...")
 
-    # Extract file operations from patches
-    results = {"patches_applied": [], "verification_status": "completed"}
+    # Extract file operations from patches and ACTUALLY EXECUTE THEM
+    results = {"patches_applied": [], "verification_status": "completed", "errors": [], "files_created": []}
     for patch in patches:
         tool_name = patch.get("tool")
         args = patch.get("args", {})
-        file_path = args.get("path", "unknown")
-
-        print(f"    - {tool_name}: {file_path}")
-        results["patches_applied"].append(file_path)
+        file_path = args.get("path") or args.get("file")
+        
+        if not file_path:
+            continue
+        
+        try:
+            if not dry_run:
+                # Actually execute the tool
+                if tool_name == "write_file":
+                    content = args.get("content", "")
+                    if not content or len(content.strip()) == 0:
+                        print(f"    ⚠️  Skipped empty file: {file_path}")
+                        continue
+                    
+                    # Ensure parent directories exist
+                    parent_dir = os.path.dirname(file_path)
+                    if parent_dir:
+                        os.makedirs(parent_dir, exist_ok=True)
+                    
+                    # Write the file
+                    with open(file_path, "w") as f:
+                        f.write(content)
+                    print(f"    ✓ Created: {file_path}")
+                    results["patches_applied"].append(file_path)
+                    results["files_created"].append(file_path)
+                    
+                elif tool_name == "edit_file":
+                    # For edit_file, actually apply the changes
+                    file_path = args.get("path") or args.get("file")
+                    old_string = args.get("oldString", "")
+                    new_string = args.get("newString", "")
+                    
+                    if not file_path or not os.path.isfile(file_path):
+                        print(f"    ⚠️  Edit target missing: {file_path}")
+                        results["errors"].append(f"File not found: {file_path}")
+                        continue
+                    
+                    # Read, replace, write
+                    with open(file_path, "r") as f:
+                        current_content = f.read()
+                    
+                    if old_string not in current_content:
+                        print(f"    ⚠️  Old string not found in: {file_path}")
+                        results["errors"].append(f"Old string not found in: {file_path}")
+                        continue
+                    
+                    new_content = current_content.replace(old_string, new_string, 1)
+                    with open(file_path, "w") as f:
+                        f.write(new_content)
+                    print(f"    ✓ Modified: {file_path}")
+                    results["patches_applied"].append(file_path)
+            else:
+                print(f"    [DRY] {tool_name}: {file_path}")
+                results["patches_applied"].append(file_path)
+        except Exception as e:
+            error_msg = f"Error applying patch to {file_path}: {str(e)}"
+            print(f"    ❌ {error_msg}")
+            results["errors"].append(error_msg)
 
     state["execution_results"] = results
     state["current_phase"] = "execution_complete"
@@ -743,10 +1143,10 @@ def should_continue_to_intent_parsing(state: AgentState) -> Literal["parse_inten
         return "parse_intent"
     return "end_workflow"
 
-def should_continue_to_impact_analysis(state: AgentState) -> Literal["analyze_impact", "handle_error"]:
-    """Decide whether to continue to impact analysis"""
+def should_continue_to_structure_validation(state: AgentState) -> Literal["validate_structure", "handle_error"]:
+    """Decide whether to validate structure"""
     if state.get("feature_spec") and not state.get("errors"):
-        return "analyze_impact"
+        return "validate_structure"
     return "handle_error"
 
 def should_continue_to_code_synthesis(state: AgentState) -> Literal["synthesize_code", "handle_error"]:
@@ -784,6 +1184,7 @@ def create_feature_request_workflow():
     # Add nodes
     workflow.add_node("analyze_context", analyze_context)
     workflow.add_node("parse_intent", parse_intent)
+    workflow.add_node("validate_structure", validate_structure)
     workflow.add_node("analyze_impact", analyze_impact)
     workflow.add_node("synthesize_code", synthesize_code)
     workflow.add_node("execute_changes", execute_changes)
@@ -805,12 +1206,14 @@ def create_feature_request_workflow():
 
     workflow.add_conditional_edges(
         "parse_intent",
-        should_continue_to_impact_analysis,
+        should_continue_to_structure_validation,
         {
-            "analyze_impact": "analyze_impact",
+            "validate_structure": "validate_structure",
             "handle_error": "handle_error"
         }
     )
+
+    workflow.add_edge("validate_structure", "analyze_impact")
 
     workflow.add_conditional_edges(
         "analyze_impact",
@@ -875,12 +1278,14 @@ def main():
             "context_analysis": None,
             "feature_spec": None,
             "impact_analysis": None,
+            "structure_assessment": None,
             "code_patches": None,
             "execution_results": None,
             "errors": [],
             "dry_run": args.dry_run,
             "current_phase": "initialized",
-            "human_approval_required": False
+            "human_approval_required": False,
+            "framework": None
         }
 
         # Execute workflow
