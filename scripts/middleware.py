@@ -634,12 +634,12 @@ def create_phase4_middleware(
     # Conditional: add guardrails only if enabled
     if enable_guardrail:
         middleware.extend([
-            FileScopeGuardrail(normalized_files, soft_mode=False, verbose=True),  # Enable verbose for debugging
+            FileScopeGuardrail(normalized_files, soft_mode=True, verbose=True),  # soft_mode=True to prevent false positive blocks
             # FIX: Pass both files and directories to ToolCallValidationMiddleware
             ToolCallValidationMiddleware(normalized_files, codebase_root, allowed_dirs=allowed_directories, 
-                                        soft_mode=False, verbose=True),  # Enable verbose for debugging
+                                        soft_mode=True, verbose=True),  # soft_mode=True to prevent false positive blocks
         ])
-        print("🛡️  Guardrails: ENABLED (with directory scope support)")
+        print("🛡️  Guardrails: ENABLED (with directory scope support, soft mode)")
     else:
         print("⚠️  Guardrails: DISABLED (debug mode)")
 
