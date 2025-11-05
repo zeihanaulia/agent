@@ -3,6 +3,7 @@
 ## General Rules
 - **Always activate virtual environment first**: Use `source .venv/bin/activate` before running any Python commands, installing packages, or executing scripts to ensure proper environment isolation.
 - **All documentation and notes must be written in the `notes/` folder**: Use the existing convention with prefixes (e.g., `codeanalysis.`, `featurerequest.`) followed by lowercase names with dashes (e.g., `featurerequest.middleware-diagrams.md`).
+- **Never include actual credentials or API keys in documentation**: Always use placeholders like "your_api_key_here" or "your_secret_key_here" instead of real values to prevent accidental exposure.
 - When a user requests to transform a Python script (.py) to a Jupyter notebook (.ipynb), follow these steps to ensure completeness and usability.
 
 ## Specific Steps for Transformation

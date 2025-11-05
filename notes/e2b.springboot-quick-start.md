@@ -8,7 +8,7 @@
 cat .env | grep E2B_API_KEY
 
 # Expected output:
-# E2B_API_KEY=e2b_24ce67e8089ef9e158c29dda0892438821da3546
+# E2B_API_KEY=your_e2b_api_key_here
 ```
 
 ### 2. Virtual Environment
