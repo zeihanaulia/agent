@@ -110,6 +110,45 @@ temperature = None  # Will be set by setup_model()
 
 
 # ==============================================================================
+# TIMEOUT HANDLING HELPERS
+# ==============================================================================
+
+def invoke_with_timeout(agent, input_data, timeout_seconds=30):
+    """
+    Invoke agent with timeout protection to prevent indefinite hanging.
+    
+    Returns:
+    - dict: agent result if successful
+    - None: if timeout occurs (caller should use fallback)
+    - Raises: Exception if error occurs
+    """
+    import threading
+    
+    result_container = {"status": "pending", "data": None, "error": None}
+    
+    def worker():
+        try:
+            result_container["data"] = agent.invoke(input_data)
+            result_container["status"] = "success"
+        except Exception as e:
+            result_container["status"] = "error"
+            result_container["error"] = str(e)
+    
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+    
+    if result_container["status"] == "pending":
+        print(f"  ⚠️  Agent invoke timeout after {timeout_seconds}s - switching to fast mode")
+        return None
+    
+    if result_container["status"] == "error":
+        raise Exception(result_container["error"])
+    
+    return result_container["data"]
+
+
+# ==============================================================================
 # PARSE ARGUMENTS FUNCTION
 # ==============================================================================
 
@@ -541,8 +580,10 @@ def parse_intent(state: AgentState) -> AgentState:
     
     state["framework"] = detected_framework
 
-    agent = create_intent_parser_agent()
-
+    # Use direct LLM call instead of deep agent to avoid hanging on tool execution
+    # Deep agent with tools can get stuck during tool_call invocation
+    from langchain_core.messages import HumanMessage
+    
     prompt = f"""
 CODEBASE CONTEXT:
 {state.get("context_analysis", "")}
@@ -558,45 +599,56 @@ As an expert software engineer, analyze this feature request:
 4. **Testability**: How can this be tested effectively? (Unit tests, Integration tests, E2E tests)
 5. **File analysis**: Which ACTUAL files need changes based on codebase patterns?
 
-Use write_todos to create a structured implementation plan with these categories:
-- Analysis: Understanding current code and patterns
-- Design: Selecting patterns and designing solution
-- Implementation: Creating/modifying specific files
-- Testing: Creating/updating tests
-- Verification: Ensuring code quality and functionality
+List implementation tasks in this format:
+- Task 1: description
+- Task 2: description
+And list relevant files found in codebase.
 
 Be specific about file paths and technical decisions.
 """
 
-    result = agent.invoke({"input": prompt})
-
-    # Extract todos and analysis from agent response
+    # Extract todos and analysis from response
     todos_found = []
     affected_files = []
+    response_text = ""
 
-    if "messages" in result:
-        for msg in result.get("messages", []):
-            # Look for write_todos tool calls
-            if hasattr(msg, "tool_calls"):
-                for call in getattr(msg, "tool_calls", []):
-                    if call.get("name") == "write_todos":
-                        todos_data = call.get("args", {}).get("todos", [])
-                        todos_found.extend(todos_data)
+    if analysis_model:
+        try:
+            # Direct LLM call - much faster and won't hang
+            response = analysis_model.invoke([HumanMessage(content=prompt)])
+            response_text = response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            print(f"  ⚠️  LLM call failed: {e} - using minimal fallback")
+            response_text = ""
+    else:
+        print("  ⚠️  Model not configured - using filesystem-based analysis only")
+        response_text = ""
 
-            # Extract file patterns from reasoning/content
-            if hasattr(msg, "content") and msg.content:
-                content_str = str(msg.content)
-                import re
-                # Find file paths - more comprehensive pattern
-                file_matches = re.findall(
-                    r'(?:src/|\.?/)?[a-zA-Z0-9_\-./]*\.(?:java|py|js|go|ts|tsx|jsx|xml|gradle|properties|yml|yaml)',
-                    content_str
-                )
-                # Validate each file match exists in codebase
-                for fm in file_matches:
-                    full_path = os.path.join(codebase_path, fm)
-                    if os.path.isfile(full_path):
-                        affected_files.append(fm)
+    if response_text:
+        content_str = str(response_text)
+        import re
+        
+        # Extract tasks/todos from response (look for bullet points or numbered items)
+        # Line pattern: "- Task description" or "  - Task description"
+        task_pattern = r'^\s*[-*]\s+(.+?)$'
+        for line in content_str.split('\n'):
+            match = re.match(task_pattern, line, re.MULTILINE)
+            if match:
+                todos_found.append({
+                    "content": line.strip(),
+                    "status": "pending"
+                })
+        
+        # Find file paths - more comprehensive pattern
+        file_matches = re.findall(
+            r'(?:src/|\.?/)?[a-zA-Z0-9_\-./]*\.(?:java|py|js|go|ts|tsx|jsx|xml|gradle|properties|yml|yaml)',
+            content_str
+        )
+        # Validate each file match exists in codebase
+        for fm in file_matches:
+            full_path = os.path.join(codebase_path, fm)
+            if os.path.isfile(full_path):
+                affected_files.append(fm)
 
     # Remove duplicates while preserving order
     affected_files = list(dict.fromkeys(affected_files))
@@ -750,12 +802,14 @@ def analyze_impact(state: AgentState) -> AgentState:
 
     # Find Java files (for Spring Boot projects)
     java_files = []
-    for root, dirs, files in os.walk(os.path.join(codebase_path, "src/main/java")):
-        for file in files:
-            if file.endswith(".java"):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, codebase_path)
-                java_files.append(rel_path)
+    java_src_dir = os.path.join(codebase_path, "src/main/java")
+    if os.path.isdir(java_src_dir):
+        for root, dirs, files in os.walk(java_src_dir):
+            for file in files:
+                if file.endswith(".java"):
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, codebase_path)
+                    java_files.append(rel_path)
 
     # Use real files detected from filesystem
     files_to_analyze = java_files if java_files else spec.affected_files
@@ -778,13 +832,13 @@ TASK: Conduct expert architecture analysis:
 7. **Testing Strategy**: How should the new code be tested?
 8. **Constraints**: Any limitations or best practices to follow?
 
-Use write_todos to plan the impact analysis tasks if needed.
 Be SPECIFIC - use exact file paths from the list above.
 """
 
-    result = agent.invoke({"input": prompt})
+    # Use timeout-protected invoke to prevent hanging
+    result = invoke_with_timeout(agent, {"input": prompt}, timeout_seconds=30)
 
-    # Extract files from agent response
+    # Extract files from agent response or use default files_to_analyze
     files_to_modify = files_to_analyze if files_to_analyze else spec.affected_files
 
     analysis = {
@@ -796,14 +850,8 @@ Be SPECIFIC - use exact file paths from the list above.
         "todos": []
     }
 
-    if "messages" in result:
+    if result and "messages" in result:
         for msg in result.get("messages", []):
-            # Extract todos if any
-            if hasattr(msg, "tool_calls"):
-                for call in getattr(msg, "tool_calls", []):
-                    if call.get("name") == "write_todos":
-                        analysis["todos"] = call.get("args", {}).get("todos", [])
-
             # Extract reasoning and insights
             if hasattr(msg, "content") and msg.content:
                 content_str = str(msg.content)
@@ -991,7 +1039,7 @@ ARCHITECTURE CONTEXT:
 Be thorough in understanding before planning implementation.
 """
 
-    _analysis_result = agent.invoke({"input": analysis_prompt})
+    _analysis_result = invoke_with_timeout(agent, {"input": analysis_prompt}, timeout_seconds=30)
 
     # Step 2: Agent implements based on plan - EXACT v2 prompt for consistency
     print("  🛠️  Step 2: Agent implementing changes...")
@@ -1089,12 +1137,11 @@ Use edit_file only for HelloController if absolutely necessary.
 Generate the actual code implementation NOW.
 """
 
-    result2 = agent.invoke({"input": implementation_prompt})
-
+    result2 = invoke_with_timeout(agent, {"input": implementation_prompt}, timeout_seconds=45)
 
     # Extract patches from implementation step with validation
     patches = []
-    if "messages" in result2:
+    if result2 and isinstance(result2, dict) and "messages" in result2:
         for msg in result2.get("messages", []):
             if hasattr(msg, "tool_calls"):
                 for call in getattr(msg, "tool_calls", []):
@@ -1134,20 +1181,29 @@ Generate the actual code implementation NOW.
                                 print("    ⚠️  Skipped edit_file with missing path")
                             elif not old_string or not new_string:
                                 print(f"    ⚠️  Skipped edit_file missing oldString/newString: {file_path}")
+    elif result2 is None:
+        print("  ⚠️  Code synthesis timed out - using fallback mode")
+        print("     This may happen with large codebases or slow LLM")
+    elif not isinstance(result2, dict):
+        print(f"  ⚠️  Unexpected result type from agent: {type(result2)}")
 
-    # Always print agent response for debugging
-    if "messages" in result2:
+    # Always print agent response for debugging (only if result2 is valid dict)
+    if result2 and isinstance(result2, dict) and "messages" in result2:
         for msg in reversed(result2.get("messages", [])):
             if hasattr(msg, "content") and msg.content:
                 content_str = str(msg.content)[:300]
                 print(f"  ℹ️ Agent response: {content_str}")
                 break
+    elif result2 is None:
+        print("  ℹ️ No agent response (timeout occurred)")
 
     if patches:
         print(f"  ✓ Generated {len(patches)} code change(s)")
         for p in patches:
             file_path = p.get('file', 'unknown')
             print(f"    - {p['tool']}: {file_path}")
+    else:
+        print("  ℹ️ No code patches generated")
 
     state["code_patches"] = patches
     state["current_phase"] = "code_synthesis_complete"

@@ -11,10 +11,11 @@ This module handles:
 
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_core.callbacks.base import BaseCallbackHandler
 from pydantic import SecretStr
 
 # Load environment variables - use explicit path
@@ -76,6 +77,52 @@ def setup_model():
         print("   This is normal if API credentials aren't valid yet")
         print("   Studio will still load - agents will fail at runtime")
         return None
+
+
+# ============================================================================
+# SETUP CALLBACKS FOR TOKEN TRACKING (LangSmith Integration)
+# ============================================================================
+
+def setup_callbacks() -> List[BaseCallbackHandler]:
+    """Setup callbacks for token tracking and LangSmith tracing"""
+    callbacks: List[BaseCallbackHandler] = []
+    
+    try:
+        langsmith_api = os.getenv("LANGSMITH_API_KEY")
+        langsmith_project = os.getenv("LANGSMITH_PROJECT")
+        langsmith_tracing = os.getenv("LANGSMITH_TRACING_V2", "false").lower() == "true"
+        
+        if langsmith_api and langsmith_project and langsmith_tracing:
+            print(f"✅ LangSmith token tracking configured for project: {langsmith_project}")
+            print("   LangSmith will automatically track token usage during workflow execution")
+            # Note: LangSmith tracing is automatically enabled via environment variables
+            # when LANGSMITH_API_KEY, LANGSMITH_TRACING_V2, and LANGSMITH_PROJECT are set
+            return callbacks
+        else:
+            missing = []
+            if not langsmith_api:
+                missing.append("LANGSMITH_API_KEY")
+            if not langsmith_project:
+                missing.append("LANGSMITH_PROJECT")
+            if not langsmith_tracing:
+                missing.append("LANGSMITH_TRACING_V2=true")
+            
+            print("⚠️  LangSmith token tracking not fully configured")
+            print(f"   Missing: {', '.join(missing)}")
+            print(f"   Token counts will show as 0 in Studio until these are set")
+            return callbacks
+            
+    except Exception as e:
+        print(f"⚠️  Error checking callback configuration: {e}")
+        return callbacks
+
+
+# Initialize callbacks at import time
+try:
+    default_callbacks = setup_callbacks()
+except Exception as e:
+    print(f"❌ Error setting up callbacks: {e}")
+    default_callbacks = []
 
 
 # Initialize model at import time
