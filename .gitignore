@@ -56,3 +56,6 @@ dataset/codes/*
 
 # Ignore entire outputs folder
 outputs/
+
+# Langgraph
+.langgraph_api

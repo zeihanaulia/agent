@@ -10,12 +10,17 @@ FORCE ?=
 NAME := $(patsubst %.git,%,$(notdir $(subst :,/,$(REPO))))
 TARGET := dataset/codes/$(NAME)
 
-.PHONY: help add-dataset-codes analyze-code
+.PHONY: help add-dataset-codes analyze-code langgraph-dev langgraph-build langgraph-install
 
 help:
 	@echo "Usage:"
 	@echo "  make add-dataset-codes REPO=git@github.com:owner/repo.git [DEPTH=1] [KEEP_GIT=1] [FORCE=1]"
 	@echo "  make analyze-code REPO=git@github.com:owner/repo.git [PYTHON=python3]"
+	@echo ""
+	@echo "LangGraph Development:"
+	@echo "  make langgraph-install    - Install langgraph-cli"
+	@echo "  make langgraph-dev        - Start LangGraph Studio dev server"
+	@echo "  make langgraph-build      - Build Docker image for production"
 
 # Clone a repository into dataset/codes/<repo-name>
 add-dataset-codes:
@@ -42,4 +47,33 @@ analyze-code: add-dataset-codes
 	fi; \
 	echo "Running code analysis on $(TARGET)"; \
 	$(PYTHON) scripts/code_analysis.py -p "$(TARGET)"
+
+# LangGraph Development Targets
+.VENV := source .venv/bin/activate
+
+langgraph-install:
+	@echo "📦 Installing langgraph-cli..."
+	$(PYTHON) -m pip install -U "langgraph-cli[inmem]"
+	@langgraph --version
+
+langgraph-dev:
+	@echo "🚀 Starting LangGraph Dev Server..."
+	@echo "📝 Config: langgraph.json"
+	@echo "🐍 Entry: langgraph_entry.py"
+	@echo "🎨 Studio URL will open in browser"
+	@echo "💡 Tip: Edit code and Studio will auto-reload"
+	@echo ""
+	$(PYTHON) -m langgraph dev
+
+langgraph-build:
+	@echo "🐳 Building Docker image..."
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make langgraph-build TAG=myimage:latest"; exit 1; \
+	fi
+	$(PYTHON) -m langgraph build -t $(TAG)
+	@echo "✅ Image built: $(TAG)"
+
+langgraph-test:
+	@echo "🧪 Testing workflow..."
+	$(PYTHON) -c "import langgraph_entry; print('✅ Workflow imports successfully'); g = langgraph_entry.get_graph(); print(f'✅ Graph ready: {g is not None}')"
 

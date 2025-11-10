@@ -100,49 +100,85 @@ class AgentState(TypedDict):
     framework: Optional[str]
 
 # ==============================================================================
-# PARSE ARGUMENTS FIRST
+# GLOBAL VARIABLES (initialized in main)
 # ==============================================================================
 
-parser = argparse.ArgumentParser(description="Feature-by-Request Agent V3")
-parser.add_argument("--codebase-path", "-p",
-                   default=os.getenv("CODEBASE_PATH", "/Users/zeihanaulia/Programming/research/agent"))
-parser.add_argument("--feature-request", "-f", help="Feature request to implement")
-parser.add_argument("--dry-run", action="store_true")
-parser.add_argument("--model", default=None, help="LLM model to use")
-parser.add_argument("--temperature", type=float, default=None)
-parser.add_argument("--enable-human-loop", action="store_true", help="Enable human-in-the-loop approval")
+args = None  # Will be set by parse_arguments()
+analysis_model = None  # Will be set by setup_model()
+model_name = None  # Will be set by setup_model()
+temperature = None  # Will be set by setup_model()
 
-args = parser.parse_args()
 
 # ==============================================================================
-# SETUP MODEL AND TEMPERATURE
+# PARSE ARGUMENTS FUNCTION
 # ==============================================================================
 
-# Get model from args or environment
-model_name = args.model or os.getenv("LITELLM_MODEL", "gpt-4o-mini")
+def parse_arguments():
+    """Parse command-line arguments"""
+    parser = argparse.ArgumentParser(description="Feature-by-Request Agent V3")
+    parser.add_argument("--codebase-path", "-p",
+                       default=os.getenv("CODEBASE_PATH", "/Users/zeihanaulia/Programming/research/agent"))
+    parser.add_argument("--feature-request", "-f", help="Feature request to implement")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--model", default=None, help="LLM model to use")
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--enable-human-loop", action="store_true", help="Enable human-in-the-loop approval")
 
-# Get temperature: auto-set based on model, or user override
-is_reasoning = any(kw in model_name.lower() for kw in ["gpt-5", "5-mini", "oss", "120b", "reasoning"])
-temperature = args.temperature if args.temperature is not None else (1.0 if is_reasoning else 0.7)
+    return parser.parse_args()
 
-# Setup API credentials
-api_key = os.getenv("LITELLM_VIRTUAL_KEY")
-api_base = os.getenv("LITELLM_API")
 
-if not api_key or not api_base:
-    raise ValueError(
-        "Missing required environment variables:\n"
-        "  LITELLM_VIRTUAL_KEY: LLM API key\n"
-        "  LITELLM_API: LLM API base URL"
+# ==============================================================================
+# SETUP MODEL FUNCTION
+# ==============================================================================
+
+def setup_model(model_override: Optional[str] = None, temperature_override: Optional[float] = None):
+    """Setup LLM model with credentials from environment
+    
+    Args:
+        model_override: Override model name from environment
+        temperature_override: Override temperature calculation
+    
+    Returns:
+        Tuple of (model_name, temperature, model_instance)
+    """
+    global analysis_model, model_name, temperature
+    
+    # Get model from args or environment
+    _model_name = model_override or os.getenv("LITELLM_MODEL", "gpt-4o-mini")
+
+    # Get temperature: auto-set based on model, or user override
+    is_reasoning = any(kw in _model_name.lower() for kw in ["gpt-5", "5-mini", "oss", "120b", "reasoning"])
+    _temperature = temperature_override if temperature_override is not None else (1.0 if is_reasoning else 0.7)
+
+    # Setup API credentials
+    api_key = os.getenv("LITELLM_VIRTUAL_KEY")
+    api_base = os.getenv("LITELLM_API")
+
+    if not api_key or not api_base:
+        raise ValueError(
+            "Missing required environment variables:\n"
+            "  LITELLM_VIRTUAL_KEY: LLM API key\n"
+            "  LITELLM_API: LLM API base URL"
+        )
+
+    # Create model instance
+    _model = ChatOpenAI(
+        api_key=SecretStr(api_key),
+        model=_model_name,
+        base_url=api_base,
+        temperature=_temperature,
+        default_headers={
+            "X-Api-Key": api_key,
+            "Authorization": f"Bearer {api_key}"
+        }
     )
-
-# Create model instance
-analysis_model = ChatOpenAI(
-    api_key=SecretStr(api_key),
-    model=model_name,
-    base_url=api_base,
-    temperature=temperature,
-)
+    
+    # Set globals
+    analysis_model = _model
+    model_name = _model_name
+    temperature = _temperature
+    
+    return _model_name, _temperature, _model
 
 # ==============================================================================
 # SUPERVISOR AGENT TOOLS
@@ -179,6 +215,11 @@ def transfer_to_executor():
 
 def create_supervisor_agent():
     """Supervisor agent that coordinates all phases"""
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
     prompt = """You are the supervisor agent coordinating a multi-phase feature implementation workflow.
 
 PHASES AVAILABLE:
@@ -240,6 +281,11 @@ WORK EFFICIENTLY - stay focused, don't over-explore.
 
 def create_intent_parser_agent():
     """Phase 2: Intent Parsing - Expert software engineer analyzing feature request"""
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
     prompt = """\
 You are an expert software engineer analyzing feature requests.
 
@@ -268,6 +314,11 @@ Be thorough, thoughtful, and follow SOLID principles and clean code practices.
 
 def create_impact_analysis_agent(codebase_path: str):
     """Phase 3: Impact Analysis - Expert architect analyzing codebase patterns"""
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
     backend = FilesystemBackend(root_dir=codebase_path)
     prompt = f"""\
 You are an expert software architect analyzing codebase impact.
@@ -298,6 +349,11 @@ def create_code_synthesis_agent(codebase_path: str, files_to_modify: Optional[Li
     
     CRITICAL: This uses v2's middleware approach to ensure feature focus and tool generation.
     """
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
     backend = FilesystemBackend(root_dir=codebase_path)
     prompt = f"""\
 You are an expert software engineer implementing a feature with production-quality standards.
@@ -346,6 +402,11 @@ Generate production-grade code that fellow engineers would be proud to review.
 
 def create_execution_agent(codebase_path: str, dry_run: bool):
     """Phase 5: Execution & Verification"""
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
     backend = FilesystemBackend(root_dir=codebase_path)
     mode = "DRY RUN" if dry_run else "APPLY CHANGES"
     prompt = f"""\
@@ -372,26 +433,91 @@ Tasks:
 # ==============================================================================
 
 def analyze_context(state: AgentState) -> AgentState:
-    """Node: Context Analysis Phase"""
-    print("🔍 Phase 1: Analyzing codebase context...")
+    """Node: Context Analysis Phase - Fast file system based analysis"""
+    print("🔍 Phase 1: Analyzing codebase context (fast mode)...")
+    
     codebase_path = state["codebase_path"]
 
-    agent = create_context_analysis_agent(codebase_path)
-    result = agent.invoke({"input": f"Analyze {codebase_path}"})
-
-    if "messages" in result:
-        for msg in reversed(result["messages"]):
-            if hasattr(msg, "content") and msg.content and not hasattr(msg, "tool_calls"):
-                state["context_analysis"] = str(msg.content)
-                state["current_phase"] = "context_analysis_complete"
-                break
-
-    if not state.get("context_analysis"):
-        state["context_analysis"] = "Analysis failed."
-        state["errors"].append("Context analysis failed")
-
-    print("  ✓ Context analysis complete")
-    return state
+    try:
+        # FAST MODE: Direct filesystem analysis without waiting for deep agent
+        print(f"  📁 Scanning codebase structure...")
+        
+        context = {
+            "project_type": "Unknown",
+            "framework": "Unknown",
+            "tech_stack": [],
+            "main_dirs": [],
+            "key_files": [],
+            "source_files_count": 0
+        }
+        
+        # Check for project type markers
+        has_pom_xml = os.path.exists(os.path.join(codebase_path, "pom.xml"))
+        has_package_json = os.path.exists(os.path.join(codebase_path, "package.json"))
+        has_requirements_txt = os.path.exists(os.path.join(codebase_path, "requirements.txt"))
+        has_gradle = os.path.exists(os.path.join(codebase_path, "build.gradle"))
+        
+        # Detect project type
+        if has_pom_xml or has_gradle:
+            context["project_type"] = "Java/Maven" if has_pom_xml else "Java/Gradle"
+            context["framework"] = "Spring Boot" if has_pom_xml else "Android/Gradle"
+        elif has_package_json:
+            context["project_type"] = "Node.js/npm"
+        elif has_requirements_txt:
+            context["project_type"] = "Python"
+        
+        # Scan directory structure
+        root_items = os.listdir(codebase_path)
+        dirs = [d for d in root_items if os.path.isdir(os.path.join(codebase_path, d)) and not d.startswith('.')]
+        context["main_dirs"] = dirs[:10]  # Top 10 directories
+        
+        # Count Java/Python/JS files
+        java_count = 0
+        python_count = 0
+        js_count = 0
+        for root, dirs_list, files in os.walk(codebase_path):
+            for f in files:
+                if f.endswith('.java'): java_count += 1
+                elif f.endswith('.py'): python_count += 1
+                elif f.endswith('.js') or f.endswith('.ts'): js_count += 1
+        
+        context["source_files_count"] = java_count + python_count + js_count
+        if java_count > 0: context["tech_stack"].append(f"Java ({java_count} files)")
+        if python_count > 0: context["tech_stack"].append(f"Python ({python_count} files)")
+        if js_count > 0: context["tech_stack"].append(f"JavaScript/TypeScript ({js_count} files)")
+        
+        # Find key config files
+        for root, dirs_list, files in os.walk(codebase_path):
+            for f in files:
+                if f in ['pom.xml', 'package.json', 'requirements.txt', 'setup.py', 'build.gradle', 'application.properties', 'application.yml']:
+                    context["key_files"].append(os.path.relpath(os.path.join(root, f), codebase_path))
+        
+        summary = f"""
+PROJECT ANALYSIS:
+- Type: {context['project_type']}
+- Framework: {context['framework']}
+- Tech Stack: {', '.join(context['tech_stack']) if context['tech_stack'] else 'Mixed'}
+- Total Source Files: {context['source_files_count']}
+- Root Directories: {', '.join(context['main_dirs'])}
+- Key Config Files: {', '.join(context['key_files'][:5]) if context['key_files'] else 'None detected'}
+"""
+        
+        state["context_analysis"] = summary
+        state["current_phase"] = "context_analysis_complete"
+        
+        print(f"  ✓ Detected: {context['project_type']} / {context['framework']}")
+        print(f"  ✓ Source files: {context['source_files_count']}")
+        print(f"  ✓ Tech stack: {', '.join(context['tech_stack']) if context['tech_stack'] else 'Unknown'}")
+        
+        return state
+        
+    except Exception as e:
+        print(f"  ❌ Error during context analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        state["errors"].append(f"Context analysis error: {str(e)}")
+        state["context_analysis"] = f"Error: {str(e)}"
+        return state
 
 def parse_intent(state: AgentState) -> AgentState:
     """Node: Intent Parsing Phase"""
@@ -1243,6 +1369,17 @@ def create_feature_request_workflow():
 # ==============================================================================
 
 def main():
+    global args, analysis_model, model_name, temperature
+    
+    # Parse command-line arguments
+    args = parse_arguments()
+    
+    # Setup model
+    model_name, temperature, analysis_model = setup_model(
+        model_override=args.model,
+        temperature_override=args.temperature
+    )
+    
     # Validate codebase path
     codebase_path = os.path.abspath(args.codebase_path)
     if not os.path.isdir(codebase_path):

@@ -1,0 +1,32 @@
+{
+  "python_version": "3.11",
+  "dependencies": ["."],
+  "graphs": {
+    "feature_request_workflow": {
+      "path": "langgraph_entry:get_graph",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "codebase_path": {
+            "type": "string",
+            "title": "Codebase Path",
+            "description": "Absolute path to the codebase to analyze (e.g., /Users/zeihanaulia/Programming/research/agent)"
+          },
+          "feature_request": {
+            "type": "string",
+            "title": "Feature Request",
+            "description": "The feature to implement (e.g., 'Add user authentication')"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "If true, show changes without applying them. If false, apply changes directly.",
+            "default": true
+          }
+        },
+        "required": ["codebase_path", "feature_request"]
+      }
+    }
+  },
+  "env": ".env"
+}
