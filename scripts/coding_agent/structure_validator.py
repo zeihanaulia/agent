@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 # Try to import framework instructions
 try:
-    from framework_instructions import FrameworkType  # pyright: ignore[reportAssignmentType]
+    from coding_agent.framework_instructions import FrameworkType  # pyright: ignore[reportAssignmentType]
     HAS_FRAMEWORK_INSTRUCTIONS = True
 except ImportError:
     HAS_FRAMEWORK_INSTRUCTIONS = False

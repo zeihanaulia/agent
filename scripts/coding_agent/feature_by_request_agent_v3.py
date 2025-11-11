@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, SecretStr
 # Import middleware from v2 for Phase 4 behavior preservation
 sys.path.insert(0, os.path.dirname(__file__))
 try:
-    from middleware import create_phase4_middleware, log_middleware_config # pyright: ignore[reportAssignmentType]
+    from coding_agent.middleware import create_phase4_middleware, log_middleware_config # pyright: ignore[reportAssignmentType]
     HAS_MIDDLEWARE = True
 except ImportError:
     HAS_MIDDLEWARE = False
@@ -36,7 +36,7 @@ except ImportError:
 
 # Import framework instructions for framework-aware code generation
 try:
-    from framework_instructions import detect_framework, get_instruction, FrameworkInstruction  # pyright: ignore[reportAssignmentType]
+    from coding_agent.framework_instructions import detect_framework, get_instruction, FrameworkInstruction  # pyright: ignore[reportAssignmentType]
     HAS_FRAMEWORK_INSTRUCTIONS = True
 except ImportError:
     HAS_FRAMEWORK_INSTRUCTIONS = False
@@ -58,7 +58,7 @@ except ImportError:
 
 # Import structure validator for architecture assessment
 try:
-    from structure_validator import validate_structure as validate_project_structure  # pyright: ignore[reportAssignmentType]
+    from coding_agent.structure_validator import validate_structure as validate_project_structure  # pyright: ignore[reportAssignmentType]
     HAS_STRUCTURE_VALIDATOR = True
 except ImportError:
     HAS_STRUCTURE_VALIDATOR = False

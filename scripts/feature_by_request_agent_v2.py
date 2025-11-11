@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 # Import middleware
 sys.path.append(os.path.dirname(__file__))
-from middleware import create_phase4_middleware, log_middleware_config
+from coding_agent.middleware import create_phase4_middleware, log_middleware_config
 
 # Load environment variables
 load_dotenv()
