@@ -299,7 +299,7 @@ source .venv/bin/activate && timeout 150 python scripts/feature_by_request_agent
 🤖 FEATURE-BY-REQUEST AGENT
 ================================================================================
 📁 Codebase: /Users/.../dataset/codes/springboot-demo
-🛠️  Model: azure/gpt-5-mini
+🛠️  Model: gpt-5-mini
 🌡️  Temperature: 1.0
 🎯 Feature: Add a new API endpoint /api/users/by-role...
 🏃 Mode: IMPLEMENT

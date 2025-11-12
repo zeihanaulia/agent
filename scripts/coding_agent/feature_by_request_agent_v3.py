@@ -98,6 +98,7 @@ class AgentState(TypedDict):
     codebase_path: str
     feature_request: Optional[str]
     context_analysis: Optional[str]
+    full_analysis: Optional[Dict[str, Any]]  # ✓ FULL ANALYSIS OBJECT FROM PHASE 1
     feature_spec: Optional[FeatureSpec]
     impact_analysis: Optional[Dict[str, Any]]
     structure_assessment: Optional[Dict[str, Any]]
@@ -125,6 +126,8 @@ def invoke_with_timeout(agent, input_data, timeout_seconds=30):
     """
     Invoke agent with timeout protection to prevent indefinite hanging.
     
+    FIX: Use .stream() for proper agent loop execution with DeepAgent (LangGraph).
+    
     Returns:
     - dict: agent result if successful
     - None: if timeout occurs (caller should use fallback)
@@ -136,22 +139,39 @@ def invoke_with_timeout(agent, input_data, timeout_seconds=30):
     
     def worker():
         try:
-            result_container["data"] = agent.invoke(input_data)
+            # Use .stream() for proper agent loop with tool execution
+            all_chunks = []
+            for chunk in agent.stream(input_data, stream_mode="values"):
+                all_chunks.append(chunk)
+            
+            # Final chunk contains complete agent state
+            if all_chunks:
+                result_container["data"] = all_chunks[-1]
+            else:
+                result_container["data"] = {}
+            
             result_container["status"] = "success"
         except Exception as e:
+            import traceback
             result_container["status"] = "error"
             result_container["error"] = str(e)
+            result_container["traceback"] = traceback.format_exc()
     
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     thread.join(timeout=timeout_seconds)
     
     if result_container["status"] == "pending":
-        print(f"  ⚠️  Agent invoke timeout after {timeout_seconds}s - switching to fast mode")
+        print(f"  ⚠️  Agent stream timeout after {timeout_seconds}s - switching to fast mode")
         return None
     
     if result_container["status"] == "error":
-        raise Exception(result_container["error"])
+        error_msg = result_container["error"]
+        tb = result_container.get("traceback", "")
+        print(f"  ❌ Agent error: {error_msg}")
+        if tb:
+            print(f"     {tb[:200]}")
+        raise Exception(error_msg)
     
     return result_container["data"]
 
@@ -166,6 +186,7 @@ def parse_arguments():
     parser.add_argument("--codebase-path", "-p",
                        default=os.getenv("CODEBASE_PATH", "/Users/zeihanaulia/Programming/research/agent"))
     parser.add_argument("--feature-request", "-f", help="Feature request to implement")
+    parser.add_argument("--feature-request-spec", help="Path to markdown file containing feature request specification")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--model", default=None, help="LLM model to use")
     parser.add_argument("--temperature", type=float, default=None)
@@ -237,11 +258,13 @@ ARCHITECTURE INSIGHTS:
 3. **Technology Stack**: {', '.join(basic['tech_stack']) if basic['tech_stack'] else 'Unknown'}
 """
         
-        state["context_analysis"] = summary
+        state["full_analysis"] = analysis_result  # ✓ STORE FULL ANALYSIS OBJECT
+        state["context_analysis"] = summary  # Keep for display/backward compatibility
         state["current_phase"] = "context_analysis_complete"
         
         print("  ✓ Analysis complete")
         print("  ✓ Context saved for next phases")
+        print(f"  ℹ️  Full analysis stored: {len(analysis_result)} analysis components")
         
         return state
         
@@ -259,6 +282,7 @@ def parse_intent(state: AgentState) -> AgentState:
     feature_request = state.get("feature_request")
     codebase_path = state["codebase_path"]
     context_analysis = state.get("context_analysis", "")
+    full_analysis = state.get("full_analysis", {})  # ✓ GET FULL ANALYSIS FROM PHASE 1
 
     if not feature_request:
         state["errors"].append("No feature request provided")
@@ -270,6 +294,7 @@ def parse_intent(state: AgentState) -> AgentState:
             "codebase_path": codebase_path,
             "feature_request": feature_request,
             "context_analysis": context_analysis,
+            "full_analysis": full_analysis,  # ✓ PASS FULL ANALYSIS TO PHASE 2
             "framework": None,
             "feature_spec": None,
             "errors": []
@@ -334,7 +359,6 @@ def validate_structure(state: AgentState) -> AgentState:
     - Production-readiness scoring
     - Feedback loop back to parse_intent if needed
     """
-    print("🏗️ Phase 2A: Structure Validation with Iterative Refinement...")
     
     # Use enhanced validator with feedback loop
     state = validate_structure_with_feedback(state, max_loops=3) # pyright: ignore[reportArgumentType, reportAssignmentType]
@@ -447,9 +471,37 @@ def main():
     print(f"🛠️  Model: {model_name}")
     print(f"🌡️  Temperature: {temperature}")
 
-    is_feature_mode = args.feature_request is not None
+    is_feature_mode = args.feature_request is not None or args.feature_request_spec is not None
+    feature_request_text = args.feature_request
     if is_feature_mode:
-        print(f"🎯 Feature: {args.feature_request}")
+        # Handle feature request from file if specified
+        if args.feature_request_spec:
+            try:
+                with open(args.feature_request_spec, 'r', encoding='utf-8') as f:
+                    full_content = f.read().strip()
+                
+                # Check if there's a "## 🎯 Feature Request" section
+                if "## 🎯 Feature Request" in full_content:
+                    # Extract the Feature Request section
+                    sections = full_content.split("## 🎯 Feature Request")
+                    if len(sections) > 1:
+                        feature_section = sections[1].split("---")[0].strip()  # Take until separator
+                        # Remove the header and clean up
+                        feature_request_text = feature_section.replace("## 🎯 Feature Request", "").strip()
+                        print("✓ Loaded feature request from '## 🎯 Feature Request' section")
+                    else:
+                        feature_request_text = full_content
+                        print(f"✓ Loaded entire feature request spec from: {args.feature_request_spec}")
+                else:
+                    feature_request_text = full_content
+                    print(f"✓ Loaded entire feature request spec from: {args.feature_request_spec}")
+                    
+            except Exception as e:
+                print(f"❌ Failed to read feature request spec from {args.feature_request_spec}: {e}")
+                import sys
+                sys.exit(1)
+        
+        print(f"🎯 Feature: {feature_request_text[:100]}{'...' if len(feature_request_text) > 100 else ''}")
         print(f"🏃 Mode: {'DRY RUN' if args.dry_run else 'IMPLEMENT'}")
         print(f"👤 Human Loop: {'ENABLED' if args.enable_human_loop else 'DISABLED'}")
     else:
@@ -465,8 +517,9 @@ def main():
         # Initialize state
         initial_state: AgentState = {
             "codebase_path": codebase_path,
-            "feature_request": args.feature_request if is_feature_mode else None,
+            "feature_request": feature_request_text if is_feature_mode else None,
             "context_analysis": None,
+            "full_analysis": None,  # ✓ INITIALIZE FULL ANALYSIS
             "feature_spec": None,
             "impact_analysis": None,
             "structure_assessment": None,

@@ -9,6 +9,11 @@ This flow analyzes project structure, technology stack, and provides
 initial context for feature implementation.
 Phase 1 of multi-phase workflow for feature implementation.
 
+Model Loading Policy:
+- When imported as module: No model initialization (avoid side-effects)
+- When run standalone: Loads model via models.setup_model() (same as orchestrator)
+- Fallback: Rule-based reasoning if model setup fails
+
 Key Improvements:
 1. ✅ No duplicate methods
 2. ✅ Clean separation of concerns
@@ -125,7 +130,7 @@ class AiderStyleRepoAnalyzer:
 
             class RealLLMModel:
                 def __init__(self):
-                    self.model = os.getenv('LITELLM_MODEL', 'gpt-4')
+                    self.model = os.getenv('LITELLM_MODEL', 'azure/gpt-4')
 
                 def token_count(self, text: str) -> int:
                     """Count tokens using rough estimation"""
@@ -196,8 +201,6 @@ class AiderStyleRepoAnalyzer:
         Returns:
             Dict with keys: reasoning, analysis_plan, results, summary, tokens_used
         """
-        print(f"🤔 Agent Reasoning: Analyzing request '{user_request}'")
-
         # Step 1: Parse user request to understand what they want
         reasoning_context = self._reason_about_request(user_request)
 
@@ -228,6 +231,7 @@ class AiderStyleRepoAnalyzer:
         api_patterns = self._analyze_api_patterns()
         ranked_elements = self._rank_code_elements()
         structure = self._analyze_project_structure()
+        file_map = self._build_file_map()  # ✓ BUILD FILE MAP FOR PHASE 2
 
         return {
             "basic_info": basic_info,
@@ -235,8 +239,62 @@ class AiderStyleRepoAnalyzer:
             "dependencies": dependencies,
             "api_patterns": api_patterns,
             "ranked_elements": ranked_elements,
-            "structure": structure
+            "structure": structure,
+            "file_map": file_map  # ✓ INCLUDE FILE MAP
         }
+    
+    def _build_file_map(self) -> Dict[str, Dict[str, Any]]:
+        """Build a map of source files with their content"""
+        print("  📂 Building file map...")
+        file_map = {}
+        
+        for root, dirs, files in os.walk(self.codebase_path):
+            # Skip hidden and build directories
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'node_modules', 'build', 'dist']]
+            
+            for file in files:
+                # Only include source files
+                if not file.endswith(('.py', '.java', '.js', '.ts', '.go', '.xml', '.json', '.md', '.yml', '.yaml')):
+                    continue
+                
+                file_path = Path(root) / file
+                rel_path = None
+                try:
+                    rel_path = str(file_path.relative_to(self.codebase_path))
+                    
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    
+                    # Determine language from extension
+                    ext = file_path.suffix
+                    lang_map = {
+                        '.py': 'python',
+                        '.java': 'java',
+                        '.js': 'javascript',
+                        '.ts': 'typescript',
+                        '.go': 'go',
+                        '.xml': 'xml',
+                        '.json': 'json',
+                        '.md': 'markdown',
+                        '.yml': 'yaml',
+                        '.yaml': 'yaml'
+                    }
+                    language = lang_map.get(ext, 'text')
+                    
+                    file_map[rel_path] = {
+                        'content': content,
+                        'language': language,
+                        'size': len(content)
+                    }
+                except Exception as e:
+                    if rel_path:
+                        print(f"    ⚠️  Failed to read {rel_path}: {e}")
+                    continue
+        
+        if file_map:
+            print(f"  ✓ Mapped {len(file_map)} files")
+        
+        return file_map
 
     # ============================================================================
     # REASONING & PLANNING
@@ -845,58 +903,133 @@ ARCHITECTURE INSIGHTS:
         return state
 
 
-# ============================================================================
-# TEST FUNCTIONS
-# ============================================================================
-
-def test_analyze_context():
-    """Test function to show what analyze_context does"""
-    print("🧪 Testing analyze_context")
-    print("=" * 50)
-
-    test_state: AgentState = {
-        "codebase_path": "/Users/zeihanaulia/Programming/research/agent/dataset/codes/casdoor",
-        "feature_request": "Add product management with CRUD endpoints",
-        "context_analysis": None,
-        "feature_spec": None,
-        "impact_analysis": None,
-        "structure_assessment": None,
-        "code_patches": None,
-        "execution_results": None,
-        "errors": [],
-        "dry_run": True,
-        "current_phase": "initialized",
-        "human_approval_required": False,
-        "framework": None
-    }
-
-    result_state = analyze_context(test_state)
-
-    print("\n✅ ANALYSIS COMPLETE:")
-    print(result_state['context_analysis'])
-
-    return result_state
-
-
 if __name__ == "__main__":
+    # Load environment variables from .env file
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        print("✓ Environment variables loaded from .env")
+    except ImportError:
+        print("⚠️ python-dotenv not installed, using system environment variables")
+
+    # Setup model for standalone execution (same as orchestrator)
+    try:
+        from models import setup_model
+        model_name, temperature, analysis_model = setup_model()
+        print(f"✓ Model initialized: {model_name} (temp: {temperature})")
+    except Exception as e:
+        print(f"⚠️ Model setup failed: {e} - will use rule-based fallback")
+        analysis_model = None
+
     parser = argparse.ArgumentParser(description='Aider-style codebase analysis')
     parser.add_argument('--codebase-path', required=True, help='Path to analyze')
     parser.add_argument('--feature-request', required=True, help='Feature request')
 
     args = parser.parse_args()
 
-    analyzer = AiderStyleRepoAnalyzer(args.codebase_path, max_tokens=2048)
+    analyzer = AiderStyleRepoAnalyzer(args.codebase_path, max_tokens=2048, main_model=analysis_model)
     analysis_result = analyzer.analyze_with_reasoning(args.feature_request)
 
     print("\n🤖 AGENT REASONING RESULTS:")
-    print("=" * 50)
+    print("=" * 60)
+    
+    # Display Reasoning
     reasoning = analysis_result.get('reasoning', {})
-    print(f"🎯 Request Type: {reasoning.get('request_type', 'unknown')}")
-    print(f"📊 Analysis Scope: {reasoning.get('scope', 'unknown')}")
-    print(f"🔧 Complexity: {reasoning.get('estimated_complexity', 'unknown')}")
-    print(f"🎯 Priority Areas: {', '.join(reasoning.get('priority_areas', []))}")
+    print("🎯 REQUEST ANALYSIS:")
+    print(f"  • Request Type: {reasoning.get('request_type', 'unknown').replace('_', ' ').title()}")
+    print(f"  • Analysis Scope: {reasoning.get('scope', 'unknown').title()}")
+    print(f"  • Estimated Complexity: {reasoning.get('estimated_complexity', 'unknown').title()}")
+    print(f"  • Priority Areas: {', '.join(reasoning.get('priority_areas', [])) if reasoning.get('priority_areas') else 'None'}")
+    if reasoning.get('entities'):
+        print(f"  • Key Entities: {', '.join(reasoning.get('entities', []))}")
+    if reasoning.get('actions'):
+        print(f"  • Required Actions: {', '.join(reasoning.get('actions', []))}")
+    if reasoning.get('technologies'):
+        print(f"  • Technologies: {', '.join(reasoning.get('technologies', []))}")
+    print()
 
-    print(f"\n📋 ANALYSIS SUMMARY:")
+    # Display Analysis Plan
+    analysis_plan = analysis_result.get('analysis_plan', {})
+    print("📋 ANALYSIS PLAN:")
+    print(f"  • Analyses to Run: {', '.join(analysis_plan.get('analyses_to_run', []))}")
+    if analysis_plan.get('skip_analyses'):
+        print(f"  • Analyses Skipped: {', '.join(analysis_plan.get('skip_analyses', []))}")
+    if analysis_plan.get('focus_files'):
+        print(f"  • Focus Files: {', '.join(analysis_plan.get('focus_files', []))}")
+    print()
+
+    # Display Results
+    results = analysis_result.get('results', {})
+    print("📊 ANALYSIS RESULTS:")
+    if 'basic_info' in results:
+        basic = results['basic_info']
+        print("  🏗️ PROJECT OVERVIEW:")
+        print(f"    • Project Type: {basic.get('project_type', 'Unknown')}")
+        print(f"    • Framework: {basic.get('framework', 'Unknown')}")
+        print(f"    • Tech Stack: {', '.join(basic.get('tech_stack', [])) if basic.get('tech_stack') else 'Unknown'}")
+        print(f"    • Source Files Count: {basic.get('source_files_count', 0)}")
+        print(f"    • Main Directories: {', '.join(basic.get('main_dirs', [])[:5])}")
+        print()
+    
+    if 'code_analysis' in results:
+        code = results['code_analysis']
+        print("  📝 CODE ANALYSIS:")
+        print(f"    • Total Tags Extracted: {code.get('total_tags', 0)}")
+        print(f"    • Definitions: {len(code.get('definitions', {}))}")
+        print(f"    • References: {len(code.get('references', {}))}")
+        print(f"    • Files Analyzed: {len(code.get('tags_by_file', {}))}")
+        print()
+    
+    if 'dependencies' in results:
+        deps = results['dependencies']
+        print("  📦 DEPENDENCIES:")
+        if deps.get('external_libs'):
+            print(f"    • External Libraries: {', '.join(deps['external_libs'])}")
+        if deps.get('frameworks_detected'):
+            print(f"    • Frameworks Detected: {', '.join(deps['frameworks_detected'])}")
+        if deps.get('database_drivers'):
+            print(f"    • Database Drivers: {', '.join(deps['database_drivers'])}")
+        print()
+    
+    if 'api_patterns' in results:
+        api = results['api_patterns']
+        print("  🌐 API PATTERNS:")
+        if api.get('endpoints'):
+            print(f"    • Endpoints: {', '.join(api['endpoints'])}")
+        if api.get('http_methods'):
+            print(f"    • HTTP Methods: {', '.join(api['http_methods'])}")
+        if api.get('api_frameworks'):
+            print(f"    • API Frameworks: {', '.join(api['api_frameworks'])}")
+        print()
+    
+    if 'structure' in results:
+        struct = results['structure']
+        print("  🏗️ PROJECT STRUCTURE:")
+        if struct.get('entry_points'):
+            print(f"    • Entry Points: {', '.join(struct['entry_points'])}")
+        print(f"    • Test Directories: {len(struct.get('test_directories', []))}")
+        print(f"    • Source Directories: {len(struct.get('source_directories', []))}")
+        print()
+
+    # Display Summary
+    print("📋 ANALYSIS SUMMARY:")
     print(analysis_result.get('summary', 'No summary available'))
+    print()
+
+    # State full analysis complete
+    print("🛠️ FULL ANALYSIS DETAILS:")
+    import json
+    print(json.dumps(analysis_result, indent=2, default=str))
+    print()
+
+    # Display Tokens Used
+    tokens_used = analysis_result.get('tokens_used', 0)
+    print(f"🎫 TOKENS USED: {tokens_used}")
 
     print("\n✅ Agent reasoning analysis completed successfully!")
+
+    """_summary_
+    Example usage:
+
+    source .venv/bin/activate && python3 scripts/coding_agent/flow_analyze_context.py --codebase-path dataset/codes/springboot-demo --feature-request "Add inventory management system with full CRUD operations including Product entity, repository, service, and REST controller with endpoints for creating, reading, updating, and deleting inventory properly with audit trail"
+    """

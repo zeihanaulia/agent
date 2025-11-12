@@ -86,8 +86,7 @@ By following this timeline, you'll understand:
 - **[testing.order-controller-wiring-report.md](testing.order-controller-wiring-report.md)** - Order controller testing
 
 #### 4.3 Bug Fixes & Debugging
-- **[codeanalysis.agent-issues-investigation.md](codeanalysis.agent-issues-investigation.md)** - Issue investigation
-- **[codeanalysis.agent-execution-deep-dive.md](codeanalysis.agent-execution-deep-dive.md)** - Execution analysis
+- **[codeanalysis.agent-execution-deep-dive.md](codeanalysis.agent-execution-deep-dive.md)** - Issue investigation & execution analysis
 - **[codeanalysis.agent-root-causes-visual.md](codeanalysis.agent-root-causes-visual.md)** - Root cause analysis
 
 ---
@@ -238,8 +237,8 @@ By following this timeline, you'll understand:
 
 ### Testing & Debugging
 - [testing.master-test-summary.md](testing.master-test-summary.md)
-- [codeanalysis.agent-issues-investigation.md](codeanalysis.agent-issues-investigation.md)
 - [codeanalysis.agent-execution-deep-dive.md](codeanalysis.agent-execution-deep-dive.md)
+- [codeanalysis.agent-root-causes-visual.md](codeanalysis.agent-root-causes-visual.md)
 
 ### Performance Optimization
 - [codeanalysis.fast-mode-implementation.md](codeanalysis.fast-mode-implementation.md)

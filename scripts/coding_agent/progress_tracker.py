@@ -124,7 +124,7 @@ class WorkProgress:
         print("="*70)
         
         print(f"\n🎯 Feature: {self.feature_name}")
-        print(f"📝 Request: {self.feature_request[:70]}...")
+        # print(f"📝 Request: {self.feature_request[:70]}...")
         print(f"🔧 Framework: {self.framework}")
         
         # Display thinking steps

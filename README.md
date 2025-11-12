@@ -59,7 +59,7 @@ This repository serves as a complete learning resource for AI agent development:
 
 ### 🧪 Testing & Validation
 - **[Testing Results](notes/testing.master-test-summary.md)** - Complete testing methodology and results
-- **[Quality Assurance](notes/codeanalysis.agent-issues-investigation.md)** - Bug fixes and debugging techniques
+- **[Quality Assurance](notes/codeanalysis.bugfix-dropdown.md)** - Bug fixes and debugging techniques
 
 ### 🚀 Roadmap & Planning
 - **[🚀 Technical Roadmap](notes/project.roadmap.md)** - Detailed development roadmap with implementation plans

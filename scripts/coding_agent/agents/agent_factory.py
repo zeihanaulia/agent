@@ -174,6 +174,13 @@ Your task:
 8. DO NOT add new dependencies - use only what's already in pom.xml/package.json
 9. Ensure code compiles/runs immediately without config changes
 
+SPRING BOOT 3.x CRITICAL REQUIREMENT:
+- Use jakarta.persistence.* imports (NOT javax.persistence.*)
+- Example: import jakarta.persistence.Entity; import jakarta.persistence.Table;
+- @Entity, @Id, @Table, @Column must come from jakarta.persistence package
+- DO NOT modify main Application.java unless absolutely necessary
+- Use standard package conventions for Spring Boot auto-discovery
+
 Generate production-grade code that fellow engineers would be proud to review.
 
 REQUIRED WORKFLOW - MANDATORY:
@@ -214,6 +221,113 @@ AVAILABLE FILES TO MODIFY:
     }
     
     # Create the agent with base configuration
+    return create_deep_agent(**agent_kwargs)
+
+
+def create_code_synthesis_agent_generation_mode(
+    codebase_path: str,
+    analysis_model: Any,
+    files_to_modify: Optional[List[str]] = None,
+    feature_request: Optional[str] = None
+) -> Any:
+    """
+    Phase 4 (Generation Mode): Code Synthesis with TOOL WHITELIST constraint
+    
+    BEST PRACTICE: Use tool whitelisting to ensure agent creates files with write_file()
+    instead of modifying existing files with edit_file().
+    
+    This agent has ONLY write_file and read_file tools available.
+    Removes: edit_file, ls, write_todos to focus on file creation.
+    
+    Args:
+        codebase_path: Root path of the codebase
+        analysis_model: LLM model instance for code generation
+        files_to_modify: List of files that will be modified (informational)
+        feature_request: Original feature request for intent reminder
+        
+    Returns:
+        DeepAgent instance configured for code generation with write_file focus
+    """
+    if not analysis_model:
+        raise ValueError(
+            "Model not configured. Please ensure LITELLM_API and LITELLM_VIRTUAL_KEY are set in .env"
+        )
+    
+    backend = FilesystemBackend(root_dir=codebase_path)
+    
+    # Scan available files for context
+    available_files = _scan_codebase_files(codebase_path, max_files=40)
+    files_context = "AVAILABLE FILES IN CODEBASE:\n"
+    if available_files:
+        for f in available_files:
+            files_context += f"  - {f}\n"
+    else:
+        files_context += "  (No files found in scan)\n"
+    
+    # Generation mode prompt - DYNAMIC based on feature request
+    prompt = f"""\
+✅ GENERATION PHASE - CREATE NEW SYSTEM FILES ONLY
+==================================================
+
+You are a code generation specialist. Your ONLY job is to CREATE NEW FILES based on the feature request.
+
+FEATURE REQUEST:
+{feature_request or "Create production-ready system implementation"}
+
+INSTRUCTIONS:
+1. Analyze the feature request to understand what system to build
+2. Create NEW Java files with Spring Boot 3.x implementation
+3. Use proper package structure (com.example.DOMAIN_NAME.*)
+4. Follow clean architecture: domain/application/adapters layers
+5. Create entities, repositories, DTOs, services as needed
+6. Do NOT modify any existing files (no edit_file calls)
+
+SPRING BOOT 3.x REQUIREMENTS (CRITICAL):
+- Use jakarta.persistence.* imports (NOT javax.persistence.*)
+- Example entity imports:
+  ```java
+  import jakarta.persistence.*;
+  import jakarta.persistence.Entity;
+  import jakarta.persistence.Table;
+  import jakarta.persistence.Id;
+  import jakarta.persistence.GeneratedValue;
+  import jakarta.persistence.GenerationType;
+  import jakarta.persistence.Column;
+  ```
+- @Entity, @Table, @Id, @GeneratedValue must come from jakarta.persistence package
+- DO NOT modify main Application.java unless absolutely necessary
+- Use standard package conventions (com.example.DOMAIN.*) for auto-discovery
+- Spring Boot auto-configuration handles most component scanning
+
+REQUIREMENTS:
+- ONLY use write_file() to create new files
+- Each file must be COMPLETE with proper package, imports, annotations
+- Follow Spring Boot 3.x conventions (Jakarta EE, not Java EE)
+- Use JPA for entities with jakarta.persistence imports
+- Spring repositories, proper DTOs, service implementations
+- Implement clean architecture patterns
+
+TOOLS AVAILABLE:
+✓ write_file() - Create new files with complete content
+✓ read_file() - Read existing files to understand patterns
+✗ edit_file() - Not available (generation mode only)
+✗ ls() - Not available in generation mode  
+✗ write_todos() - Not available in generation mode
+
+AVAILABLE FILES FOR REFERENCE:
+{files_context}
+
+NOW: Based on the feature request above, create all necessary Java files for the system implementation using write_file(). Generate production-ready code with proper Spring Boot patterns.
+"""
+    
+    # Create agent with tool whitelist
+    # We explicitly create only write_file and read_file tools
+    agent_kwargs = {
+        "system_prompt": prompt,
+        "model": analysis_model,
+        "backend": backend
+    }
+    
     return create_deep_agent(**agent_kwargs)
 
 

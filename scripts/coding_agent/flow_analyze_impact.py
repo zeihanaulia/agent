@@ -21,6 +21,8 @@ def invoke_with_timeout(agent, input_data, timeout_seconds=30):
     """
     Invoke agent with timeout protection to prevent indefinite hanging.
     
+    FIX: Use .stream() for proper agent loop execution with DeepAgent (LangGraph).
+    
     Returns:
     - dict: agent result if successful
     - None: if timeout occurs (caller should use fallback)
@@ -32,22 +34,39 @@ def invoke_with_timeout(agent, input_data, timeout_seconds=30):
     
     def worker():
         try:
-            result_container["data"] = agent.invoke(input_data)
+            # Use .stream() for proper agent loop with tool execution
+            all_chunks = []
+            for chunk in agent.stream(input_data, stream_mode="values"):
+                all_chunks.append(chunk)
+            
+            # Final chunk contains complete agent state
+            if all_chunks:
+                result_container["data"] = all_chunks[-1]
+            else:
+                result_container["data"] = {}
+            
             result_container["status"] = "success"
         except Exception as e:
+            import traceback
             result_container["status"] = "error"
             result_container["error"] = str(e)
+            result_container["traceback"] = traceback.format_exc()
     
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     thread.join(timeout=timeout_seconds)
     
     if result_container["status"] == "pending":
-        print(f"  ⚠️  Agent invoke timeout after {timeout_seconds}s - switching to fast mode")
+        print(f"  ⚠️  Agent stream timeout after {timeout_seconds}s - switching to fast mode")
         return None
     
     if result_container["status"] == "error":
-        raise Exception(result_container["error"])
+        error_msg = result_container["error"]
+        tb = result_container.get("traceback", "")
+        print(f"  ❌ Agent error: {error_msg}")
+        if tb:
+            print(f"     {tb[:200]}")
+        raise Exception(error_msg)
     
     return result_container["data"]
 

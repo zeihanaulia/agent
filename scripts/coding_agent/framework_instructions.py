@@ -136,8 +136,46 @@ SPRING BOOT BEST PRACTICES - CODE GENERATION INSTRUCTIONS
    - Return ResponseEntity<T> for flexible HTTP responses
    - Use DTOs for request/response bodies
    - Entity models only for database (not for API)
+   
+5. SPRING BOOT 3.x REQUIREMENTS:
+   - Use jakarta.persistence.* imports (NOT javax.persistence.*)
+   - Example: import jakarta.persistence.*; for @Entity, @Id, @Table, @Column
+   - Example JPA entity:
+   ```java
+   package com.example.model;
+   
+   import jakarta.persistence.*;
+   import java.time.LocalDateTime;
+   
+   @Entity
+   @Table(name = "products")
+   public class Product {
+       @Id
+       @GeneratedValue(strategy = GenerationType.IDENTITY)
+       private Long id;
+       
+       @Column(name = "name")
+       private String name;
+   }
+   ```
 
-5. EXISTING CODEBASE PATTERNS:
+6. APPLICATION CONFIGURATION GUIDELINES:
+   - DO NOT modify the main Application.java class unless absolutely necessary
+   - Use standard Spring Boot package conventions (com.example.DOMAIN.*)
+   - Spring Boot auto-configuration should handle most wiring
+   - Only add @ComponentScan, @EnableJpaRepositories, @EntityScan if components are in non-standard packages
+   - Prefer keeping all components under the main application package for auto-discovery
+
+7. DEPENDENCY MANAGEMENT:
+   - Standard Spring Boot starters are acceptable (data-jpa, web, test)
+   - Common databases (H2, PostgreSQL, MySQL) are acceptable for development
+   - DO NOT add exotic or non-standard dependencies without explicit requirement
+   - Example acceptable additions to pom.xml:
+     * spring-boot-starter-data-jpa for JPA/database support
+     * H2 database for in-memory testing
+     * spring-boot-starter-validation for bean validation
+
+8. EXISTING CODEBASE PATTERNS:
    [Analyze for] naming conventions, package structure, import styles, 
    existing service/repository patterns, test structure, Spring Boot version
 

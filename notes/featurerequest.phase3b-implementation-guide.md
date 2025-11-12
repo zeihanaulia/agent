@@ -399,7 +399,7 @@ USE write_file for EACH new file.
 Example:
   write_file(
     path="src/main/java/com/example/springboot/model/Order.java",
-    content="package com.example.springboot.model;\n\nimport javax.persistence.*;\n..."
+    content="package com.example.springboot.model;\n\nimport jakarta.persistence.*;\n..."
   )
 """
 ```

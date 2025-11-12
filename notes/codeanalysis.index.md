@@ -71,7 +71,7 @@ CODEBASE_PATH=/path/to/project python scripts/code_analysis.py
 ```
 🤖 DEEP CODE ANALYSIS AGENT (VERBOSE MODE)
 📁 Target Codebase: /path/to/project
-🛠️  Model: azure/gpt-5-mini
+🛠️  Model: gpt-5-mini
 💾 Backend: FilesystemBackend (LangChain Built-in)
 🌡️  Temperature: 0.7
 

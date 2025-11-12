@@ -8,7 +8,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 ### For First-Time Users
 ```
-1. Read: QUICK_REFERENCE.md (2 min read)
+1. Read: codeanalysis.quick-reference.md (2 min read)
    → Quick start, basic usage, key commands
 
 2. Run: ./gradio/start_app.sh (instant)
@@ -20,13 +20,13 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 ### For Detailed Learning
 ```
-1. Read: FEATURE_SUMMARY.md (5 min read)
+1. Read: codeanalysis.feature-summary.md (5 min read)
    → Visual overview of new Fast Mode feature
 
-2. Read: ANALYSIS_MODES.md (10 min read)
+2. Read: codeanalysis.analysis-modes.md (10 min read)
    → Complete guide with examples
 
-3. Read: README_CODE_ANALYSIS.md (15 min read)
+3. Read: codeanalysis.readme-code-analysis.md (15 min read)
    → Full user guide with all features
 
 4. Try: Both modes and compare outputs
@@ -35,10 +35,10 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 ### For Developers
 ```
-1. Read: INTEGRATION_GUIDE.md (20 min read)
+1. Read: codeanalysis.integration-guide.md (20 min read)
    → Architecture and component breakdown
 
-2. Read: FAST_MODE_IMPLEMENTATION.md (15 min read)
+2. Read: codeanalysis.fast-mode-implementation.md (15 min read)
    → Code changes and technical details
 
 3. Read: gradio_code_analysis_repo.py source (30 min)
@@ -56,25 +56,25 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 | File | Type | Read Time | Purpose |
 |------|------|-----------|---------|
-| **QUICK_REFERENCE.md** | Guide | 2 min | One-page quick reference |
-| **FEATURE_SUMMARY.md** | Guide | 5 min | New Fast Mode visual overview |
-| **ANALYSIS_MODES.md** | Guide | 10 min | Detailed analysis modes guide |
+| **codeanalysis.quick-reference.md** | Guide | 2 min | One-page quick reference |
+| **codeanalysis.feature-summary.md** | Guide | 5 min | New Fast Mode visual overview |
+| **codeanalysis.analysis-modes.md** | Guide | 10 min | Detailed analysis modes guide |
 
 ### User Documentation
 
 | File | Type | Read Time | Purpose |
 |------|------|-----------|---------|
-| **README_CODE_ANALYSIS.md** | Guide | 15 min | Complete user guide |
-| **SOLUTION_SUMMARY.md** | Document | 5 min | Problem → Solution explanation |
-| **BUGFIX_DROPDOWN.md** | Document | 3 min | Previous bug fix details |
+| **codeanalysis.readme-code-analysis.md** | Guide | 15 min | Complete user guide |
+| **codeanalysis.solution-summary.md** | Document | 5 min | Problem → Solution explanation |
+| **codeanalysis.bugfix-dropdown.md** | Document | 3 min | Previous bug fix details |
 
 ### Developer Documentation
 
 | File | Type | Read Time | Purpose |
 |------|------|-----------|---------|
-| **INTEGRATION_GUIDE.md** | Technical | 20 min | Architecture & design |
-| **FAST_MODE_IMPLEMENTATION.md** | Technical | 15 min | Implementation details |
-| **COMPLETION_SUMMARY.md** | Technical | 10 min | Project overview |
+| **codeanalysis.integration-guide.md** | Technical | 20 min | Architecture & design |
+| **codeanalysis.fast-mode-implementation.md** | Technical | 15 min | Implementation details |
+| **codeanalysis.completion-summary.md** | Technical | 10 min | Project overview |
 
 ### Source Code
 
@@ -92,9 +92,9 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 **Path**: Quick Reference → Feature Summary → Try It
 
 ```
-1. QUICK_REFERENCE.md
+1. codeanalysis.quick-reference.md
    ↓
-2. FEATURE_SUMMARY.md (optional)
+2. codeanalysis.feature-summary.md (optional)
    ↓
 3. Start app: ./gradio/start_app.sh
    ↓
@@ -110,11 +110,11 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 **Path**: Feature Summary → Solution Summary → Analysis Modes
 
 ```
-1. FEATURE_SUMMARY.md
+1. codeanalysis.feature-summary.md
    ↓
-2. SOLUTION_SUMMARY.md
+2. codeanalysis.solution-summary.md
    ↓
-3. ANALYSIS_MODES.md
+3. codeanalysis.analysis-modes.md
    ↓
 4. Demo to team
 ```
@@ -128,11 +128,11 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 **Path**: Integration Guide → Implementation → Source Code
 
 ```
-1. INTEGRATION_GUIDE.md
+1. codeanalysis.integration-guide.md
    ↓
-2. FAST_MODE_IMPLEMENTATION.md
+2. codeanalysis.fast-mode-implementation.md
    ↓
-3. COMPLETION_SUMMARY.md
+3. codeanalysis.completion-summary.md
    ↓
 4. Read: gradio_code_analysis_repo.py
    ↓
@@ -148,11 +148,11 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 **Path**: Quick Reference → Integration Guide → Troubleshooting
 
 ```
-1. QUICK_REFERENCE.md (commands section)
+1. codeanalysis.quick-reference.md (commands section)
    ↓
-2. INTEGRATION_GUIDE.md (architecture)
+2. codeanalysis.integration-guide.md (architecture)
    ↓
-3. README_CODE_ANALYSIS.md (troubleshooting)
+3. codeanalysis.readme-code-analysis.md (troubleshooting)
    ↓
 4. Deploy and monitor
 ```
@@ -163,7 +163,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 ## 📋 File Contents at a Glance
 
-### QUICK_REFERENCE.md (5 KB)
+### codeanalysis.quick-reference.md (5 KB)
 ```
 ✓ One-line start command
 ✓ 3-step usage guide
@@ -175,7 +175,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Example repos to try
 ```
 
-### FEATURE_SUMMARY.md (6 KB)
+### codeanalysis.feature-summary.md (6 KB)
 ```
 ✓ Problem → Solution
 ✓ Before/After comparison
@@ -186,7 +186,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ FAQ section
 ```
 
-### ANALYSIS_MODES.md (8 KB)
+### codeanalysis.analysis-modes.md (8 KB)
 ```
 ✓ Mode comparison table
 ✓ What each mode does
@@ -198,7 +198,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Learning path
 ```
 
-### README_CODE_ANALYSIS.md (11 KB)
+### codeanalysis.readme-code-analysis.md (11 KB)
 ```
 ✓ Features overview
 ✓ Prerequisites
@@ -211,7 +211,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Troubleshooting
 ```
 
-### INTEGRATION_GUIDE.md (15 KB)
+### codeanalysis.integration-guide.md (15 KB)
 ```
 ✓ Architecture overview
 ✓ Component breakdown
@@ -223,7 +223,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Advanced customization
 ```
 
-### FAST_MODE_IMPLEMENTATION.md (6 KB)
+### codeanalysis.fast-mode-implementation.md (6 KB)
 ```
 ✓ Implementation summary
 ✓ Problem addressed
@@ -234,7 +234,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Quality assurance
 ```
 
-### COMPLETION_SUMMARY.md (10 KB)
+### codeanalysis.completion-summary.md (10 KB)
 ```
 ✓ Project overview
 ✓ File structure
@@ -245,7 +245,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Troubleshooting
 ```
 
-### SOLUTION_SUMMARY.md (5 KB)
+### codeanalysis.solution-summary.md (5 KB)
 ```
 ✓ Problem statement
 ✓ Solution overview
@@ -256,7 +256,7 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 ✓ Implementation checklist
 ```
 
-### BUGFIX_DROPDOWN.md (3 KB)
+### codeanalysis.bugfix-dropdown.md (3 KB)
 ```
 ✓ Issue description
 ✓ Root cause analysis
@@ -272,12 +272,12 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 
 ### If you're reading... | Next read...
 |---|---|
-| QUICK_REFERENCE | → FEATURE_SUMMARY (to understand new modes) |
-| FEATURE_SUMMARY | → ANALYSIS_MODES (for detailed guide) |
-| ANALYSIS_MODES | → README_CODE_ANALYSIS (for full user guide) |
-| README_CODE_ANALYSIS | → INTEGRATION_GUIDE (to understand how it works) |
-| INTEGRATION_GUIDE | → FAST_MODE_IMPLEMENTATION (to see code changes) |
-| FAST_MODE_IMPLEMENTATION | → gradio_code_analysis_repo.py (to read source) |
+| codeanalysis.quick-reference | → codeanalysis.feature-summary (to understand new modes) |
+| codeanalysis.feature-summary | → codeanalysis.analysis-modes (for detailed guide) |
+| codeanalysis.analysis-modes | → codeanalysis.readme-code-analysis (for full user guide) |
+| codeanalysis.readme-code-analysis | → codeanalysis.integration-guide (to understand how it works) |
+| codeanalysis.integration-guide | → codeanalysis.fast-mode-implementation (to see code changes) |
+| codeanalysis.fast-mode-implementation | → gradio_code_analysis_repo.py (to read source) |
 
 ---
 
@@ -288,8 +288,8 @@ Complete guide to all documentation files for the Deep Code Analysis Agent.
 Time: 15 minutes total
 
 Read:
-  1. QUICK_REFERENCE.md (2 min)
-  2. FEATURE_SUMMARY.md (5 min)
+  1. codeanalysis.quick-reference.md (2 min)
+  2. codeanalysis.feature-summary.md (5 min)
   
 Do:
   3. Start app (1 min)
@@ -303,10 +303,10 @@ Do:
 Time: 30 minutes total
 
 Read:
-  1. QUICK_REFERENCE.md (2 min)
-  2. FEATURE_SUMMARY.md (5 min)
-  3. ANALYSIS_MODES.md (10 min)
-  4. README_CODE_ANALYSIS.md (8 min)
+  1. codeanalysis.quick-reference.md (2 min)
+  2. codeanalysis.feature-summary.md (5 min)
+  3. codeanalysis.analysis-modes.md (10 min)
+  4. codeanalysis.readme-code-analysis.md (8 min)
   
 Do:
   5. Try multiple repos (5 min)
@@ -318,8 +318,8 @@ Time: 60 minutes total
 
 Read:
   1. All Level 2 docs (30 min)
-  2. INTEGRATION_GUIDE.md (20 min)
-  3. SOLUTION_SUMMARY.md (5 min)
+  2. codeanalysis.integration-guide.md (20 min)
+  3. codeanalysis.solution-summary.md (5 min)
   
 Do:
   4. Deploy to server (5 min)
@@ -331,8 +331,8 @@ Time: 120+ minutes total
 
 Read:
   1. All previous levels (60 min)
-  2. FAST_MODE_IMPLEMENTATION.md (15 min)
-  3. COMPLETION_SUMMARY.md (10 min)
+  2. codeanalysis.fast-mode-implementation.md (15 min)
+  3. codeanalysis.completion-summary.md (10 min)
   4. Source code (20 min)
   
 Do:
@@ -344,28 +344,28 @@ Do:
 ## 🔍 Finding Information
 
 ### Q: How do I start?
-**A:** → `QUICK_REFERENCE.md` (line: "One-Line Start")
+**A:** → `codeanalysis.quick-reference.md` (line: "One-Line Start")
 
 ### Q: What's new in this version?
-**A:** → `FEATURE_SUMMARY.md` (entire document)
+**A:** → `codeanalysis.feature-summary.md` (entire document)
 
 ### Q: When should I use each mode?
-**A:** → `ANALYSIS_MODES.md` (line: "How to Choose")
+**A:** → `codeanalysis.analysis-modes.md` (line: "How to Choose")
 
 ### Q: What if analysis seems stuck?
-**A:** → `README_CODE_ANALYSIS.md` (Troubleshooting section)
+**A:** → `codeanalysis.readme-code-analysis.md` (Troubleshooting section)
 
 ### Q: How does it technically work?
-**A:** → `INTEGRATION_GUIDE.md` (entire document)
+**A:** → `codeanalysis.integration-guide.md` (entire document)
 
 ### Q: What code changed?
-**A:** → `FAST_MODE_IMPLEMENTATION.md` (Code Changes section)
+**A:** → `codeanalysis.fast-mode-implementation.md` (Code Changes section)
 
 ### Q: Is this backward compatible?
-**A:** → `FEATURE_SUMMARY.md` (bottom) or `BUGFIX_DROPDOWN.md`
+**A:** → `codeanalysis.feature-summary.md` (bottom) or `codeanalysis.bugfix-dropdown.md`
 
 ### Q: What are the performance gains?
-**A:** → `SOLUTION_SUMMARY.md` (Performance Comparison)
+**A:** → `codeanalysis.solution-summary.md` (Performance Comparison)
 
 ---
 
@@ -430,11 +430,11 @@ By Category:
 
 | Need | Document | Time |
 |------|----------|------|
-| Quick start | QUICK_REFERENCE.md | 2 min |
-| Understand feature | FEATURE_SUMMARY.md | 5 min |
-| Complete guide | ANALYSIS_MODES.md | 10 min |
-| Architecture | INTEGRATION_GUIDE.md | 20 min |
-| Code details | FAST_MODE_IMPLEMENTATION.md | 15 min |
+| Quick start | codeanalysis.quick-reference.md | 2 min |
+| Understand feature | codeanalysis.feature-summary.md | 5 min |
+| Complete guide | codeanalysis.analysis-modes.md | 10 min |
+| Architecture | codeanalysis.integration-guide.md | 20 min |
+| Code details | codeanalysis.fast-mode-implementation.md | 15 min |
 | Everything | This index | 10 min |
 
 ---
@@ -443,7 +443,7 @@ By Category:
 
 **Have questions?**
 1. Check the appropriate document above
-2. Try Quick Reference first
+2. Try codeanalysis.quick-reference.md first
 3. Search for keywords in docs
 4. Check Troubleshooting sections
 
