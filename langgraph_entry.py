@@ -32,6 +32,25 @@ if env_path:
 else:
     print("⚠️  .env not found - will check environment variables only")
 
+
+def configure_tracing_runtime() -> None:
+    """
+    Apply LangSmith tracing best practice defaults.
+
+    LangSmith docs recommend disabling background callbacks for CLIs / short-lived
+    processes so traces flush before exit.
+    """
+    tracing_enabled = os.getenv("LANGSMITH_TRACING_V2", "false").lower() == "true"
+    if not tracing_enabled:
+        return
+
+    if os.getenv("LANGCHAIN_CALLBACKS_BACKGROUND") is None:
+        os.environ["LANGCHAIN_CALLBACKS_BACKGROUND"] = "false"
+        print("✅ LangSmith tracing: forcing LANGCHAIN_CALLBACKS_BACKGROUND=false (foreground callback flush)")
+
+
+configure_tracing_runtime()
+
 # ============================================================================
 # SETUP MODEL AT IMPORT TIME (required for Studio)
 # ============================================================================

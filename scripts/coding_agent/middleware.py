@@ -11,13 +11,92 @@ Based on LangChain AgentMiddleware API:
 https://docs.langchain.com/oss/python/langchain/middleware
 """
 
+import json
 import os
 import re
-from typing import Any, Callable, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware import hook_config
 from langgraph.runtime import Runtime
 from langchain_core.messages import ToolMessage, AIMessage, SystemMessage
+
+
+def _normalize_arguments(raw_args: Any) -> Dict[str, Any]:
+    """Convert OpenAI-style argument payloads (JSON strings) into dicts."""
+    if raw_args is None:
+        return {}
+    if isinstance(raw_args, str):
+        try:
+            return json.loads(raw_args)
+        except Exception:
+            return {}
+    if isinstance(raw_args, dict):
+        return raw_args
+    # Some SDKs wrap arguments inside `.arguments` attribute
+    if hasattr(raw_args, "arguments"):
+        return _normalize_arguments(getattr(raw_args, "arguments"))
+    return {}
+
+
+def _extract_tool_call(request: Any) -> Tuple[str, Dict[str, Any], Any]:
+    """
+    Best-effort extraction of tool call metadata from LangChain/OpenAI structures.
+
+    Returns:
+        (tool_name, args_dict, raw_tool_call)
+    """
+    tool_call = None
+    if hasattr(request, "tool_call") and request.tool_call:
+        tool_call = request.tool_call
+    elif hasattr(request, "tool_calls") and request.tool_calls:
+        tool_call = request.tool_calls[0]
+
+    tool_name = ""
+    raw_args: Any = {}
+
+    if isinstance(tool_call, dict):
+        tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name", "") or ""
+        raw_args = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", {}) or {}
+    elif tool_call is not None:
+        # LangChain OpenAIFunctionCall
+        tool_name = getattr(tool_call, "name", "") or getattr(getattr(tool_call, "function", None), "name", "") or ""
+        raw_args = getattr(tool_call, "arguments", None) or getattr(getattr(tool_call, "function", None), "arguments", None)
+
+    args = _normalize_arguments(raw_args)
+    return tool_name, args, tool_call
+
+
+def _extract_path(args: Dict[str, Any]) -> str:
+    """Best-effort extraction of path/directory info from tool arguments."""
+    for key in ("path", "file", "filePath", "file_path", "directory"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _format_tool_log(tool_name: str, args: Dict[str, Any]) -> str:
+    """Create human-readable trace lines similar to IDE run logs."""
+    path = _extract_path(args)
+    if tool_name == "write_file":
+        content = args.get("content", "")
+        size = len(content.encode("utf-8")) if isinstance(content, str) else 0
+        preview = content[:60].replace("\n", " ") if isinstance(content, str) else ""
+        return f"write_file → {path or '<missing path>'} (bytes={size}) {preview and f' // {preview}'}"
+    if tool_name == "edit_file":
+        old = args.get("oldString", "")
+        new = args.get("newString", "")
+        return f"edit_file → {path or '<missing path>'} (replace {len(old)} chars → {len(new)} chars)"
+    if tool_name == "read_file":
+        return f"read_file → {path or '<missing path>'}"
+    if tool_name == "ls":
+        target = path or args.get("path", ".")
+        return f"ls → {target}"
+    if tool_name == "write_todos":
+        checklist = args.get("todos") or args.get("content") or ""
+        count = len(checklist) if isinstance(checklist, list) else 1
+        return f"write_todos → {path or 'todo.md'} ({count} item(s))"
+    return f"{tool_name} → {path or 'args: ' + str(args)}"
 
 
 class IntentReminderMiddleware(AgentMiddleware):
@@ -337,35 +416,7 @@ class ToolCallValidationMiddleware(AgentMiddleware):
             ToolMessage with result or error
         """
         try:
-            # FIX: Better extraction of tool call information from request
-            tool_call = None
-            tool_name = ""
-            args = {}
-            
-            # Try different ways to extract tool call based on LangChain structure
-            if hasattr(request, 'tool_call'):
-                tool_call = request.tool_call
-            elif hasattr(request, 'tool_calls') and request.tool_calls:
-                tool_call = request.tool_calls[0]
-            
-            if tool_call:
-                # Extract tool name
-                if isinstance(tool_call, dict):
-                    tool_name = tool_call.get("name", "") or tool_call.get("function", {}).get("name", "")
-                    # Extract arguments
-                    args = tool_call.get("arguments", {}) or tool_call.get("function", {}).get("arguments", {})
-                else:
-                    # If tool_call is an object
-                    tool_name = getattr(tool_call, "name", "") or getattr(tool_call, "function", {}).get("name", "")
-                    args = getattr(tool_call, "arguments", {}) or getattr(tool_call, "function", {}).get("arguments", {})
-
-            # Parse arguments if they're JSON string
-            if isinstance(args, str):
-                import json
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {}
+            tool_name, args, tool_call = _extract_tool_call(request)
 
             # Only validate file-modifying tools
             if tool_name not in ["write_file", "edit_file", "create_file"]:
@@ -425,11 +476,11 @@ class ToolCallValidationMiddleware(AgentMiddleware):
         except Exception as e:
             # If anything goes wrong, safe-fail with error message
             tool_call_id = "unknown"
-            if hasattr(request, 'tool_call'):
-                tool_call_id = getattr(request.tool_call, "id", "unknown") if not isinstance(request.tool_call, dict) else request.tool_call.get("id", "unknown")
-            elif hasattr(request, 'tool_calls') and request.tool_calls:
-                tc = request.tool_calls[0]
-                tool_call_id = getattr(tc, "id", "unknown") if not isinstance(tc, dict) else tc.get("id", "unknown")
+            _, _, tool_call = _extract_tool_call(request)
+            if isinstance(tool_call, dict):
+                tool_call_id = tool_call.get("id", "unknown")
+            elif tool_call is not None:
+                tool_call_id = getattr(tool_call, "id", "unknown")
 
             error_msg = f"❌ Tool validation error: {str(e)}"
             if self.verbose:
@@ -458,26 +509,43 @@ class TraceLoggingMiddleware(AgentMiddleware):
         print(f"🧩 [MODEL] About to call model with {len(messages)} messages")
         return None
 
+    def after_model(self, state: AgentState, runtime: Runtime) -> Optional[dict[str, Any]]:
+        """Log the assistant reasoning snippet after each model response."""
+        messages = state.get("messages", [])
+        if not messages:
+            return None
+
+        last_msg = messages[-1]
+        if getattr(last_msg, "type", None) == "tool":
+            return None
+
+        content = str(getattr(last_msg, "content", "")).strip()
+        if content:
+            snippet = content[:200].replace("\n", " ")
+            print(f"💡 [MODEL] {snippet}{'…' if len(content) > 200 else ''}")
+        return None
+
     def wrap_tool_call(
         self,
         request: Any,
         handler: Callable
     ) -> ToolMessage:
         """Log tool calls."""
-        # Extract tool call information
-        tool_call = getattr(request, 'tool_call', {})
-        if hasattr(request, 'tool_calls') and request.tool_calls:
-            tool_call = request.tool_calls[0]
-
-        tool_name = tool_call.get("name", "") or tool_call.get("function", {}).get("name", "")
-        args = tool_call.get("arguments", {}) or tool_call.get("function", {}).get("arguments", {})
-
-        print(f"🛠️ [TOOL] {tool_name}({args})")
+        tool_name, args, _ = _extract_tool_call(request)
+        if not tool_name:
+            print("🛠️ [TOOL] (unknown tool)")
+        else:
+            print(f"🛠️ [TOOL] {_format_tool_log(tool_name, args)}")
 
         # Execute the tool
         result = handler(request)
 
-        print(f"✅ [TOOL] {tool_name} completed")
+        if tool_name:
+            path = _extract_path(args)
+            suffix = f" ({path})" if path else ""
+            print(f"✅ [TOOL] {tool_name} completed{suffix}")
+        else:
+            print("✅ [TOOL] completed")
         return result
 
 

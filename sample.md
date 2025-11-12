@@ -5,6 +5,11 @@
 
 ```md
 source .venv/bin/activate && python3 scripts/coding_agent/feature_by_request_agent_v3.py --codebase-path dataset/codes/springboot-demo --feature-request "Add product management with CRUD endpoints"
+
+source .venv/bin/activate && python3 scripts/coding_agent/feature_by_request_agent_v3.py --codebase-path dataset/codes/springboot-demo --feature-request "Add inventory management with CRUD endpoints"
+
+
+
 ```
 
 ## Request add new feature -  user authentication
