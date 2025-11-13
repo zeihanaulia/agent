@@ -45,7 +45,6 @@ from flow_execute_changes import flow_execute_changes  # pyright: ignore[reportA
 
 # Import workflow routing (NEW: conditional logic)
 from workflow_routing import (  # pyright: ignore[reportAssignmentType]
-    should_continue_to_intent_parsing,
     should_continue_to_structure_validation,
     should_continue_to_code_synthesis,
     should_continue_to_execution,
@@ -104,11 +103,15 @@ class AgentState(TypedDict):
     structure_assessment: Optional[Dict[str, Any]]
     code_patches: Optional[List[Dict[str, Any]]]
     execution_results: Optional[Dict[str, Any]]
+    sandbox_results: Optional[Dict[str, Any]]  # NEW: E2B sandbox test results
+    sandbox_error_analysis: Optional[List[Dict[str, Any]]]  # NEW: Detailed error analysis
     errors: List[str]
     dry_run: bool
     current_phase: str
     human_approval_required: bool
     framework: Optional[Any]  # Can be FrameworkType enum or str or None
+    run_sandbox_test: bool  # NEW: Flag to enable sandbox testing
+    max_sandbox_iterations: int  # NEW: Max iterations for sandbox fixes
 
 # ==============================================================================
 # GLOBAL VARIABLES (initialized in main)
@@ -191,6 +194,12 @@ def parse_arguments():
     parser.add_argument("--model", default=None, help="LLM model to use")
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--enable-human-loop", action="store_true", help="Enable human-in-the-loop approval")
+    
+    # NEW: Sandbox testing arguments
+    parser.add_argument("--sandbox", action="store_true", 
+                       help="Enable E2B sandbox testing for Spring Boot projects")
+    parser.add_argument("--max-iteration", type=int, default=10,
+                       help="Maximum number of fix iterations for sandbox testing (default: 10)")
 
     return parser.parse_args()
 
@@ -377,6 +386,97 @@ def execute_changes(state: AgentState, enable_human_loop: bool = False) -> Agent
     """Node: Execution Phase with Human Approval (delegate to flow_execute_changes)"""
     return flow_execute_changes(state, enable_human_loop=enable_human_loop)
 
+def test_sandbox(state: AgentState) -> AgentState:
+    """Node: E2B Sandbox Testing Phase"""
+    from flow_test_sandbox import flow_test_sandbox
+    max_iterations = state.get("max_sandbox_iterations", 10)
+    # Cast state to Dict[str, Any] for the flow function
+    state_dict = dict(state)
+    updated_state = flow_test_sandbox(state_dict, max_iterations)
+    # Create a new state with updated values
+    new_state = state.copy()
+    new_state["sandbox_results"] = updated_state.get("sandbox_results")
+    new_state["sandbox_error_analysis"] = updated_state.get("sandbox_error_analysis") 
+    if "errors" in updated_state:
+        new_state["errors"] = updated_state["errors"]
+    return new_state
+
+def skip_sandbox(state: AgentState) -> AgentState:
+    """Node: Skip sandbox testing"""
+    print("⏭️  Skipping sandbox testing")
+    state["sandbox_results"] = {
+        "skipped": True,
+        "reason": "Sandbox testing not enabled or not a Spring Boot project",
+        "success": True
+    }
+    return state
+
+
+def should_run_sandbox_test(state: AgentState) -> str:
+    """
+    Conditional routing function to determine if sandbox testing should run
+    
+    Returns:
+        "test_sandbox" if sandbox testing should run
+        "skip_sandbox" to skip sandbox testing  
+        "end_workflow" to end the workflow
+    """
+    
+    # Check if there were execution errors - might want to skip sandbox in that case
+    if state.get("errors") and len(state["errors"]) > 0:
+        return "end_workflow"
+    
+    # Check if sandbox testing was explicitly requested
+    if state.get("run_sandbox_test", False):
+        return "test_sandbox"
+        
+    return "skip_sandbox"
+
+
+def should_handle_sandbox_errors(state: AgentState) -> str:
+    """
+    Conditional routing function after sandbox testing to handle errors properly
+    
+    Returns:
+        "handle_error" if there are errors from sandbox testing
+        "end_workflow" to complete the workflow successfully
+    """
+    
+    # Check if there are any errors (including from sandbox testing)
+    if state.get("errors") and len(state["errors"]) > 0:
+        print("❌ Sandbox testing encountered errors, routing to error handler...")
+        return "handle_error"
+    
+    # Check if sandbox results indicate failure
+    sandbox_results = state.get("sandbox_results")
+    if sandbox_results and not sandbox_results.get("success", False):
+        print("❌ Sandbox testing failed, routing to error handler...")
+        return "handle_error"
+        
+    return "end_workflow"
+
+def should_skip_to_sandbox(state: AgentState) -> str:
+    """
+    NEW: Conditional routing function to skip directly to sandbox testing
+    
+    Returns:
+        "test_sandbox" if --sandbox flag is set (skip analysis phases)
+        "parse_intent" for normal workflow
+        "end_workflow" if errors
+    """
+    
+    # Check for errors first
+    if state.get("errors") and len(state["errors"]) > 0:
+        return "end_workflow"
+    
+    # If sandbox testing is requested, skip directly to sandbox
+    if state.get("run_sandbox_test", False):
+        print("🚀 --sandbox flag detected: Skipping analysis phases, going directly to sandbox testing...")
+        return "test_sandbox"
+    
+    # Normal workflow - continue to intent parsing
+    return "parse_intent"
+
 # ==============================================================================
 # WORKFLOW CREATION
 # ==============================================================================
@@ -392,18 +492,21 @@ def create_feature_request_workflow():
     workflow.add_node("analyze_impact", analyze_impact)
     workflow.add_node("synthesize_code", synthesize_code)
     workflow.add_node("execute_changes", execute_changes)
+    workflow.add_node("test_sandbox", test_sandbox)  # NEW: Sandbox testing node
+    workflow.add_node("skip_sandbox", skip_sandbox)  # NEW: Skip sandbox node
     workflow.add_node("handle_error", handle_error)
     workflow.add_node("end_workflow", end_workflow)
 
-    # Add edges
+    # Add edges - NEW: Direct sandbox routing
     workflow.add_edge(START, "analyze_context")
 
-    # Conditional edges with error handling
+    # NEW: Conditional edges with sandbox shortcut
     workflow.add_conditional_edges(
         "analyze_context",
-        should_continue_to_intent_parsing,
+        should_skip_to_sandbox,  # NEW: Check if we should skip to sandbox
         {
-            "parse_intent": "parse_intent",
+            "test_sandbox": "test_sandbox",  # NEW: Direct to sandbox
+            "parse_intent": "parse_intent",  # Normal flow
             "end_workflow": "end_workflow"
         }
     )
@@ -436,6 +539,38 @@ def create_feature_request_workflow():
             "handle_error": "handle_error"
         }
     )
+    
+    # NEW: Conditional sandbox testing after execution
+    workflow.add_conditional_edges(
+        "execute_changes",
+        should_run_sandbox_test,
+        {
+            "test_sandbox": "test_sandbox",
+            "skip_sandbox": "skip_sandbox",
+            "end_workflow": "end_workflow"
+        }
+    )
+    
+    # NEW: Conditional routing after sandbox testing to handle errors
+    workflow.add_conditional_edges(
+        "test_sandbox",
+        should_handle_sandbox_errors,
+        {
+            "handle_error": "handle_error",
+            "end_workflow": "end_workflow"
+        }
+    )
+    
+    # NEW: Conditional routing after skip_sandbox
+    workflow.add_conditional_edges(
+        "skip_sandbox",
+        should_handle_sandbox_errors,
+        {
+            "handle_error": "handle_error",
+            "end_workflow": "end_workflow"
+        }
+    )
+    
     workflow.add_edge("handle_error", "end_workflow")
 
     # Compile with checkpointer for persistence
@@ -525,11 +660,15 @@ def main():
             "structure_assessment": None,
             "code_patches": None,
             "execution_results": None,
+            "sandbox_results": None,  # NEW: Initialize sandbox results
+            "sandbox_error_analysis": None,  # NEW: Initialize sandbox error analysis
             "errors": [],
             "dry_run": args.dry_run,
             "current_phase": "initialized",
             "human_approval_required": False,
-            "framework": None
+            "framework": None,
+            "run_sandbox_test": getattr(args, 'sandbox', False),  # NEW: Enable sandbox if --sandbox flag
+            "max_sandbox_iterations": getattr(args, 'max_iteration', 10)  # NEW: Max iterations from args
         }
 
         # Execute workflow
@@ -592,6 +731,7 @@ def main():
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+        import sys
         traceback.print_exc()
         sys.exit(1)
 
