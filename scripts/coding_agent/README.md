@@ -124,17 +124,35 @@ Jalankan test end-to-end untuk validasi full workflow:
 3. **Debug Guardrail** – `middleware.log_middleware_config()` membantu memastikan daftar file yang dijaga sudah benar sebelum Phase 4.
 
 ## Flow Level 0
-Diagram ini merangkum alur utama sesuai urutan node yang ditambahkan di `create_feature_request_workflow()` LangGraph: mulai dari analisis konteks hingga eksekusi.
+Diagram ini merangkum alur utama sesuai urutan node yang ditambahkan di `create_feature_request_workflow()` LangGraph dengan support untuk sandbox testing shortcut.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Start((Mulai)) --> Analyze[Analyze Context]
-    Analyze --> Intent[Parse Intent]
+    Analyze --> Decision1{Check Flags}
+    Decision1 -->|--sandbox flag| Sandbox[Test Sandbox]
+    Decision1 -->|Normal flow| Intent[Parse Intent]
+    Decision1 -->|Errors| End((Selesai))
+    
     Intent --> Struct[Validate Structure]
     Struct --> Impact[Analyze Impact]
     Impact --> Code[Synthesize Code]
     Code --> Exec[Execute Changes]
-    Exec --> End((Selesai))
+    
+    Exec --> Decision2{Run Sandbox?}
+    Decision2 -->|Yes| Sandbox
+    Decision2 -->|Skip| SkipSandbox[Skip Sandbox]
+    Decision2 -->|End| End
+    
+    Sandbox --> Decision3{Sandbox OK?}
+    Decision3 -->|Errors| HandleError[Handle Error]
+    Decision3 -->|Success| End
+    
+    SkipSandbox --> Decision4{Status OK?}
+    Decision4 -->|Errors| HandleError
+    Decision4 -->|Success| End
+    
+    HandleError --> End
 ```
 
 ## Flow Level 1 dengan Phase 2A
@@ -239,17 +257,36 @@ flowchart TB
 ```mermaid
 flowchart TD
     subgraph LangGraph Workflow
-        START((Start)) --> Ctx[Phase 1\nContext Analyzer\nflow_analize_context.py]
-        Ctx --> Intent[Phase 2\nIntent Parser\nflow_parse_intent.py]
-        Intent --> Struct[Phase 2.5\nStructure Validator]
-        Struct --> Impact[Phase 3\nImpact Analyzer]
-        Impact --> Code[Phase 4\nCode Synthesizer\n+ Phase4 Middleware]
-        Code --> Exec[Phase 5\nExecutor]
-        Exec --> END((Selesai))
+        START((Start)) --> Ctx[Phase 1\nContext Analyzer\nflow_analyze_context.py]
+        Ctx --> Router{--sandbox?}
+        Router -->|Yes| Sandbox[Phase 6\nE2B Sandbox\nflow_test_sandbox.py]
+        Router -->|No| Intent[Phase 2\nIntent Parser\nflow_parse_intent.py]
+        Router -->|Error| End
+        
+        Intent --> Struct[Phase 2A\nStructure Validator\nflow_validate_structure.py]
+        Struct --> Impact[Phase 3\nImpact Analyzer\nflow_analyze_impact.py]
+        Impact --> Code[Phase 4\nCode Synthesizer\nflow_synthesize_code.py]
+        Code --> Exec[Phase 5\nExecutor\nflow_execute_changes.py]
+        
+        Exec --> Router2{Run Sandbox?}
+        Router2 -->|Yes| Sandbox
+        Router2 -->|Skip| SkipSandbox[Skip Sandbox]
+        Router2 -->|End| End
+        
+        Sandbox --> SandboxRouter{Errors?}
+        SandboxRouter -->|Yes| HandleError[Error Handler]
+        SandboxRouter -->|No| End
+        
+        SkipSandbox --> SkipRouter{Status OK?}
+        SkipRouter -->|Yes| End
+        SkipRouter -->|No| HandleError
+        
+        HandleError --> End((Selesai))
     end
 
     Intent -- FeatureSpec/TodoList --> Code
     Struct -- Violations & Score --> Impact
+    
     subgraph Guardrails & Helpers
         MW[IntentReminder + FileScopeGuardrail\nmiddleware.py]
         FW[Framework Instructions\nframework_instructions.py]
@@ -260,10 +297,10 @@ flowchart TD
     Code -. "inject prompt & validasi" .-> MW
     Ctx -. "deteksi framework" .-> FW
     FW -. "konvensi & file pattern" .-> Intent
-    Exec -. "opsional sandbox" .-> SB[SpringBoot Generator]
+    Sandbox -. "test changes" .-> Exec
 
     subgraph Testing Infrastructure
-        UT[Unit Tests\ntests/*.py\n✅ 3/7 Working]
+        UT[Unit Tests\ntests/*.py\n✅ 4/8 Working]
         IT[Integration Tests\nscripts/*.sh\n✅ Phase 4 Validation]
     end
 
@@ -357,3 +394,122 @@ python feature_by_request_agent_v3.py \
 ```
 
 **Last Updated**: November 12, 2025 | **Test Status**: ✅ Validated | **Architecture**: 🏗️ Production Ready
+
+## 🚧 Next Improvements
+
+### Proposed: Multi-Agent Persona-Based Routing Architecture
+
+Proposal untuk redesign agent v3 dengan **supervisor pattern** berbasis Engineering Manager yang intelligent routing ke specialist agents:
+
+```mermaid
+flowchart TD
+    subgraph MultiAgent["🎯 Multi-Agent Supervisor Pattern"]
+        Start((User Input)) --> EM["🏢 Engineering Manager<br/>(Supervisor)"]
+        EM --> Analyze["📊 analyze_context()"]
+        Analyze --> Intent["🧭 parse_intent()"]
+        Intent --> Router{"🔀 Routing Decision<br/>based on:<br/>- CLI flags<br/>- Intent type<br/>- Project context"}
+        
+        subgraph Developer["👨‍💻 Developer Workflow"]
+            D1["💻 synthesize_code()"]
+            D2["🔨 execute_changes()"]
+            D3["🐛 fixing_code_analyze()"]
+            D1 --> D2 --> D3
+        end
+        
+        subgraph QA["🧪 QA/SEIT Workflow"]
+            Q1["📦 test_sandbox()"]
+            Q2["📋 report_issue_clear()"]
+            Q1 --> Q2
+        end
+        
+        subgraph Troubleshoot["🔧 Troubleshoot Workflow"]
+            T1["🔍 analyze_errors()"]
+            T2["🛠️ apply_fixes()"]
+            T1 --> T2
+        end
+        
+        Router -->|--feature-request flag| Developer
+        Router -->|--sandbox flag| QA
+        Router -->|Error/Failure| Troubleshoot
+        
+        Developer --> End((Complete))
+        QA --> End
+        Troubleshoot --> End
+    end
+    
+    style EM fill:#ff6b6b,color:#fff
+    style Router fill:#4ecdc4,color:#fff
+    style Developer fill:#95e1d3,color:#000
+    style QA fill:#f9ca24,color:#000
+    style Troubleshoot fill:#ff9ff3,color:#000
+```
+
+**Key Benefits:**
+- ✅ **Clear Separation of Concerns**: Each agent focused on specialized domain
+- ✅ **Intelligent Routing**: Engineering Manager determines optimal workflow
+- ✅ **Parallel Processing**: Independent specialists dapat berjalan parallel
+- ✅ **Single Entry Point**: Unified CLI interface dengan smart routing
+- ✅ **Scalability**: Easy to add new specialist agents (DevOps, Security, etc.)
+
+**Current vs Proposed:**
+
+| Aspect | Current (v3) | Proposed (v4+) |
+|--------|-------------|-----------------|
+| **Architecture** | Sequential phases | Supervisor + Specialist agents |
+| **Routing** | Linear flow | Intelligent conditional routing |
+| **Specialists** | Single agent | Multiple persona-based agents |
+| **Use Cases** | Feature requests only | Features, Testing, Troubleshooting |
+| **Entry Point** | Multiple flags | Single intelligent router |
+| **Scalability** | Limited | Horizontally scalable |
+
+**Implementation Phases:**
+
+1. **Phase 1**: Engineering Manager setup dengan conditional routing
+2. **Phase 2**: Separate Developer & QA workflows sebagai subgraphs
+3. **Phase 3**: Parallel processing optimization
+4. **Phase 4**: Advanced routing dengan ML confidence scores
+
+Reference: [`featurerequest.multi-agent-persona-based-routing-architecture.md`](../../notes/featurerequest.multi-agent-persona-based-routing-architecture.md)
+
+---
+
+### 1. **Advanced Agent Coordination** (Phase 6+)
+- Implement feedback loops between phases (e.g., Impact Analyzer → Intent Parser refinement)
+- Add inter-agent communication protocol for knowledge sharing
+- Introduce agent dependency resolution for parallel phase execution
+- Reference: [`featurerequest.multi-agent-persona-based-routing-architecture.md`](../../notes/featurerequest.multi-agent-persona-based-routing-architecture.md) – Complete architecture proposal with supervisor pattern, state management, and routing logic
+
+### 2. **Distributed Execution Framework**
+- Support multi-machine agent deployment using task queues (Celery, RQ)
+- Implement fault tolerance and automatic retry mechanisms
+- Add agent health monitoring and load balancing
+- Reference: [`featurerequest.multi-agent-persona-based-routing-architecture.md`](../../notes/featurerequest.multi-agent-persona-based-routing-architecture.md) – Section: "Implementation Phases" → Phase 3
+
+### 3. **Enhanced Knowledge Management**
+- Build persistent knowledge base for architectural patterns (vector DB)
+- Implement memory system for learning from past feature requests
+- Add context compression techniques for large codebases
+- Reference: [`featurerequest.multi-agent-persona-based-routing-architecture.md`](../../notes/featurerequest.multi-agent-persona-based-routing-architecture.md) – Section: "Context Engineering"
+
+### 4. **Quality Assurance Pipeline**
+- Extend Phase 5 with automated test generation for new code
+- Add code quality metrics (coverage, complexity, performance)
+- Implement style checking and architecture validation post-execution
+- Create regression test suite for feature interactions
+
+### 5. **Human-in-the-Loop Enhancement**
+- Improve `--enable-human-loop` with rich visualization of decision points
+- Add approval workflows with role-based access control
+- Implement suggestion refinement loop for human feedback
+- Reference: [`featurerequest.multi-agent-persona-based-routing-architecture.md`](../../notes/featurerequest.multi-agent-persona-based-routing-architecture.md) – Section: "Human-in-the-Loop Integration"
+
+### 6. **Performance & Optimization**
+- Implement caching layer for context analysis and impact analysis results
+- Add parallel agent execution for independent phases
+- Optimize LLM token usage with prompt compression and few-shot learning
+- Profile and optimize critical path in workflow execution
+
+### 7. **Multi-Codebase Support**
+- Extend workflow for monorepo and multi-service architectures
+- Add cross-service dependency analysis
+- Implement coordinated deployments across multiple codebases
