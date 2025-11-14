@@ -263,7 +263,7 @@ PROJECT STRUCTURE:
 
 ARCHITECTURE INSIGHTS:
 1. **Application Type**: {infer_app_type(basic, structure)}
-2. **Main Components**: {', '.join([name for name, _ in ranked['top_elements'][:3]])}
+2. **Main Components**: {', '.join([name for name, _ in (ranked.get('top_elements') or ranked.get('elements') or [])[:3]]) if ranked else 'Unknown'}
 3. **Technology Stack**: {', '.join(basic['tech_stack']) if basic['tech_stack'] else 'Unknown'}
 """
         
