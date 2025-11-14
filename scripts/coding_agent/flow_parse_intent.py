@@ -479,7 +479,14 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
                                     overview_dict = json.loads(msg.content)
-                                    overview = ProjectOverview.model_validate(overview_dict)
+                                    # Normalize overview dict: ensure modules is a list of strings
+                                    normalized_overview = overview_dict.copy()
+                                    if 'modules' in normalized_overview and isinstance(normalized_overview['modules'], dict):
+                                        # If modules is a dict, convert to list
+                                        normalized_overview['modules'] = list(normalized_overview['modules'].values()) if normalized_overview['modules'] else []
+                                    elif 'modules' not in normalized_overview:
+                                        normalized_overview['modules'] = []
+                                    overview = ProjectOverview.model_validate(normalized_overview)
                                     project_overview_data = overview.model_dump()
                                 except Exception as e:
                                     logger.warning(f"Failed to parse project overview: {e}. Using defaults.")
@@ -489,7 +496,21 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
                                     arch_dict = json.loads(msg.content)
-                                    arch_info = ArchitectureInfo.model_validate(arch_dict)
+                                    # Normalize architecture dict: convert dict fields to strings
+                                    normalized_arch = {}
+                                    for key, value in arch_dict.items():
+                                        if value is None:
+                                            normalized_arch[key] = ""
+                                        elif isinstance(value, dict):
+                                            # Convert nested dict to JSON string representation
+                                            normalized_arch[key] = json.dumps(value)
+                                        elif isinstance(value, list):
+                                            # Convert list to JSON string representation
+                                            normalized_arch[key] = json.dumps(value)
+                                        else:
+                                            # Keep strings and other primitives as-is
+                                            normalized_arch[key] = str(value) if value else ""
+                                    arch_info = ArchitectureInfo.model_validate(normalized_arch)
                                     architecture_data = arch_info.model_dump()
                                 except Exception as e:
                                     logger.warning(f"Failed to parse architecture info: {e}. Using defaults.")
@@ -499,7 +520,28 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
                                     deps_dict = json.loads(msg.content)
-                                    deps_info = DependencyInfo.model_validate(deps_dict)
+                                    # Normalize dependencies dict: ensure lists are actual lists
+                                    normalized_deps = {}
+                                    for key, value in deps_dict.items():
+                                        if key in ['baseline_dependencies', 'optional_dependencies']:
+                                            # Ensure these are lists
+                                            if isinstance(value, dict):
+                                                normalized_deps[key] = list(value.values()) if value else []
+                                            elif isinstance(value, list):
+                                                normalized_deps[key] = value
+                                            else:
+                                                normalized_deps[key] = []
+                                        elif key in ['workflow_guidelines', 'quality_checklist', 'security_guidelines', 'testing_guidelines']:
+                                            # Ensure these are lists or dicts
+                                            if isinstance(value, dict):
+                                                normalized_deps[key] = value
+                                            elif isinstance(value, list):
+                                                normalized_deps[key] = value
+                                            else:
+                                                normalized_deps[key] = []
+                                        else:
+                                            normalized_deps[key] = value
+                                    deps_info = DependencyInfo.model_validate(normalized_deps)
                                     dependencies_data = deps_info.model_dump()
                                 except Exception as e:
                                     logger.warning(f"Failed to parse dependency info: {e}. Using defaults.")

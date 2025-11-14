@@ -126,31 +126,42 @@ class AiderStyleRepoAnalyzer:
             raise RuntimeError("❌ LiteLLM is not available. Cannot initialize agent reasoning. Install with: pip install litellm")
 
         try:
-            import litellm
+            from langchain_openai import ChatOpenAI
+            from pydantic import SecretStr
 
             class RealLLMModel:
                 def __init__(self):
-                    self.model = os.getenv('LITELLM_MODEL', 'azure/gpt-4')
+                    self.model_name = os.getenv('LITELLM_MODEL', 'azure/gpt-4')
+                    api_key = os.getenv('LITELLM_VIRTUAL_KEY')
+                    api_base = os.getenv('LITELLM_API')
+                    
+                    if not api_key or not api_base:
+                        raise ValueError("Missing LITELLM_VIRTUAL_KEY or LITELLM_API environment variables")
+                    
+                    # Use ChatOpenAI which properly handles Azure model names
+                    self.client = ChatOpenAI(
+                        api_key=SecretStr(api_key),
+                        model=self.model_name,
+                        base_url=api_base,
+                        temperature=1.0,
+                    )
 
                 def token_count(self, text: str) -> int:
                     """Count tokens using rough estimation"""
                     return max(1, len(text) // 4)
 
                 def generate_reasoning(self, prompt: str, max_tokens: int = 1000) -> str:
-                    """Generate reasoning using LiteLLM"""
+                    """Generate reasoning using ChatOpenAI"""
                     try:
-                        response = litellm.completion(
-                            model=self.model,
-                            messages=[{"role": "user", "content": prompt}],
-                            max_tokens=max_tokens,
-                            temperature=1.0,
-                            api_key=os.getenv('LITELLM_VIRTUAL_KEY'),
-                            api_base=os.getenv('LITELLM_API')
-                        )
-                        if hasattr(response, 'choices') and response.choices:
-                            return response.choices[0].message.content.strip()
+                        response = self.client.invoke([{"role": "user", "content": prompt}])
+                        if hasattr(response, 'content'):
+                            content = response.content
+                            # Handle if content is a list
+                            if isinstance(content, list):
+                                content = ''.join(str(c) for c in content)
+                            return str(content).strip() if content else ""
                         else:
-                            return "LLM response format unexpected"
+                            return str(response)
                     except Exception as e:
                         print(f"❌ LLM generation failed: {e}")
                         raise
@@ -232,6 +243,13 @@ class AiderStyleRepoAnalyzer:
         ranked_elements = self._rank_code_elements()
         structure = self._analyze_project_structure()
         file_map = self._build_file_map()  # ✓ BUILD FILE MAP FOR PHASE 2
+        
+        # ✓ NEW: Generate placement suggestions with discovered packages
+        analysis_result_for_placement = {
+            "basic_info": basic_info,
+            "structure": structure  # ✓ PASS discovered packages to placement analyzer
+        }
+        placement_analysis = self.infer_code_placement("", analysis_result_for_placement)
 
         return {
             "basic_info": basic_info,
@@ -240,7 +258,8 @@ class AiderStyleRepoAnalyzer:
             "api_patterns": api_patterns,
             "ranked_elements": ranked_elements,
             "structure": structure,
-            "file_map": file_map  # ✓ INCLUDE FILE MAP
+            "file_map": file_map,  # ✓ INCLUDE FILE MAP
+            "placement_analysis": placement_analysis  # ✓ NEW: Include placement insights
         }
     
     def _build_file_map(self) -> Dict[str, Dict[str, Any]]:
@@ -758,7 +777,9 @@ Format as JSON.
             "config_files": [],
             "test_directories": [],
             "source_directories": [],
-            "architecture_patterns": []
+            "architecture_patterns": [],
+            "java_packages": [],  # ✓ NEW: Discovered Java packages
+            "package_mappings": {}  # ✓ NEW: Path to package name mappings
         }
 
         for root, dirs, files in os.walk(self.codebase_path):
@@ -767,7 +788,180 @@ Format as JSON.
                     rel_path = os.path.relpath(os.path.join(root, file), self.codebase_path)
                     structure["entry_points"].append(rel_path)
 
+        # ✓ NEW: Discover actual Java package structure
+        structure["java_packages"] = self._discover_java_packages()
+        structure["package_mappings"] = self._extract_package_mappings()
+
         return structure
+    
+    def _discover_java_packages(self) -> list:
+        """Discover all Java package hierarchies in the project"""
+        packages = []
+        
+        for root, dirs, files in os.walk(self.codebase_path):
+            for file in files:
+                if file.endswith('.java'):
+                    file_path = Path(root) / file
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith('package '):
+                                    # Extract: "package com.example.springboot.product;" → "com.example.springboot.product"
+                                    package_name = line.replace('package ', '').rstrip(';').strip()
+                                    if package_name and package_name not in packages:
+                                        packages.append(package_name)
+                                    break
+                    except Exception:
+                        pass
+        
+        packages.sort()
+        return packages
+    
+    def _extract_package_mappings(self) -> Dict[str, str]:
+        """Map Java source directories to their package prefixes"""
+        mappings = {}
+        
+        # Look for src/main/java directories
+        for root, dirs, files in os.walk(self.codebase_path):
+            if 'src' in dirs:
+                src_path = Path(root) / 'src'
+                if (src_path / 'main' / 'java').exists():
+                    java_src = src_path / 'main' / 'java'
+                    
+                    # Find first-level package directories
+                    for item in java_src.iterdir():
+                        if item.is_dir():
+                            rel_path = str(item.relative_to(self.codebase_path))
+                            # Infer package from directory structure
+                            # e.g., "src/main/java/com/example/springboot/product" → "com.example.springboot.product"
+                            package_path = rel_path.replace(str(java_src.relative_to(self.codebase_path)), '').lstrip('/')
+                            if package_path:
+                                mappings[rel_path] = package_path.replace('/', '.')
+        
+        return mappings
+
+    # ============================================================================
+    # CODE PLACEMENT SUBAGENT (DeepAgent Pattern)
+    # ============================================================================
+    
+    def _create_placement_reasoning_agent(self):
+        """
+        Create a specialized subagent for code placement reasoning.
+        
+        WHY SUBAGENT: Complex reasoning about package structures and placement requires:
+        - Context isolation: Keep placement logic separate from main analyzer
+        - Specialized instructions: Custom system prompt for package analysis
+        - Dynamic input: Pass discovered structure as context injection
+        - Multi-step reasoning: Analyze patterns → match to request → recommend placement
+        
+        FOLLOWS DeepAgents BEST PRACTICE:
+        - Subagent receives only relevant context (discovered packages, request)
+        - Custom system prompt for specialized placement reasoning
+        - Returns structured placement suggestions
+        - Main agent doesn't need to manage complex placement logic
+        """
+        try:
+            from deepagents import create_deep_agent
+            
+            system_prompt = """You are a Code Placement Specialist for Java project organization.
+
+Your task: Given a feature request and discovered Java package structure, determine the optimal placement for new code.
+
+RULES FOR PLACEMENT:
+1. ALWAYS use discovered packages from the codebase - never suggest 'com/example' if not found
+2. Analyze existing package hierarchy and naming patterns
+3. For entities/models: place in existing model/domain packages
+4. For controllers: place in existing controller/api packages
+5. For services: place in existing service packages
+6. Match the naming convention already used in the project
+
+IMPORTANT: Return ONLY valid paths that align with existing package structure in the repo.
+If uncertain, use the deepest package hierarchy discovered.
+
+Input context:
+- Feature request: What the user wants to add
+- Discovered packages: List of actual packages found in codebase
+- File structure: Actual directory mappings
+
+Respond with JSON containing placement suggestions based on DISCOVERED structure, not templates."""
+
+            placement_agent = create_deep_agent(
+                model=self.main_model.model_name if hasattr(self.main_model, 'model_name') else "gpt-4",
+                system_prompt=system_prompt,
+                tools=[]
+            )
+            return placement_agent
+        except ImportError:
+            print("  ⚠️ DeepAgents not available - using fallback reasoning")
+            return None
+    
+    def _reason_placement_with_context(
+        self,
+        feature_request: str,
+        discovered_packages: list,
+        package_mappings: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """
+        Use LLM reasoning to determine code placement based on discovered structure.
+        
+        CONTEXT INJECTION: Pass only relevant data (discovered packages, not hardcoded templates)
+        This follows DeepAgents pattern of selective context passing.
+        """
+        if not discovered_packages:
+            print("    ⚠️ No discovered packages - cannot reason placement")
+            return {}
+        
+        # Build context for placement reasoning
+        packages_str = "\n".join([f"  • {pkg}" for pkg in discovered_packages[:10]])
+        mappings_str = "\n".join([f"  • {path} → {pkg}" for path, pkg in list(package_mappings.items())[:5]])
+        
+        prompt = f"""Analyze code placement based on DISCOVERED package structure:
+
+FEATURE REQUEST:
+{feature_request}
+
+DISCOVERED JAVA PACKAGES IN CODEBASE:
+{packages_str}
+
+PACKAGE PATH MAPPINGS:
+{mappings_str}
+
+Based on these ACTUAL packages found in the repo, suggest where to place:
+1. Entities/Models
+2. Controllers/APIs  
+3. Services
+4. Repositories
+
+Return JSON with 'placements' array containing:
+{{"
+  "type": "entity|controller|service|repository",
+  "suggested_package": "discovered.package.name",
+  "directory": "src/main/java/discovered/package/name",
+  "reasoning": "why this placement matches existing patterns"
+}}
+
+CRITICAL: Use only discovered packages, never suggest com/example if not found."""
+
+        try:
+            if self.main_model and hasattr(self.main_model, 'generate_reasoning'):
+                response = self.main_model.generate_reasoning(prompt, max_tokens=800)
+                
+                # Parse response
+                try:
+                    import json as json_module
+                    # Extract JSON from response
+                    json_match = response.find('{')
+                    if json_match >= 0:
+                        parsed = json_module.loads(response[json_match:])
+                        return parsed
+                except (Exception,):
+                    pass
+            
+            return {}
+        except Exception as err:
+            print(f"    ⚠️ Placement reasoning failed: {err}")
+            return {}
 
     # ============================================================================
     # CODE PLACEMENT & FILE MENTION INFERENCE
@@ -806,33 +1000,115 @@ Format as JSON.
         return result
 
     def infer_code_placement(self, feature_request: str, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Infer where to place new code"""
+        """
+        Infer where to place new code using discovered package structure.
+        
+        USES DEEPAGENTS BEST PRACTICE:
+        - Extracts discovered packages from analysis_result (context injection)
+        - Uses LLM reasoning with actual repo structure, not hardcoded templates
+        - Returns placement suggestions based on existing patterns in codebase
+        - Avoids 'com/example' template - always aligns with discovered structure
+        """
         cache_key = hashlib.md5(feature_request.encode()).hexdigest()
         if cache_key in self.structure_inference_cache:
             return self.structure_inference_cache[cache_key]
 
         basic = analysis_result.get("basic_info", {})
+        structure = analysis_result.get("structure", {})
         placement_suggestions = []
+        discovered_packages = []  # Initialize to avoid unbound error
 
         if basic.get('project_type') == 'Java/Maven':
-            if 'entity' in feature_request.lower():
-                placement_suggestions.append({
-                    'type': 'entity',
-                    'directory': 'src/main/java/com/example/entity',
-                    'filename_pattern': '{Entity}Entity.java',
-                    'purpose': 'JPA entity classes'
-                })
-            if 'endpoint' in feature_request.lower() or 'controller' in feature_request.lower():
-                placement_suggestions.append({
-                    'type': 'controller',
-                    'directory': 'src/main/java/com/example/controller',
-                    'filename_pattern': '{Feature}Controller.java',
-                    'purpose': 'REST controllers'
-                })
+            # ✓ IMPROVED: Extract discovered packages instead of using hardcoded paths
+            discovered_packages = structure.get("java_packages", [])
+            package_mappings = structure.get("package_mappings", {})
+            
+            print(f"    📍 Discovered {len(discovered_packages)} Java packages")
+            if discovered_packages:
+                print(f"    📦 Packages: {', '.join(discovered_packages[:3])}{'...' if len(discovered_packages) > 3 else ''}")
+            
+            # ✓ USE REASONING: Get LLM-based placement suggestions with discovered context
+            if LLM_AVAILABLE and self.main_model:
+                reasoning_result = self._reason_placement_with_context(
+                    feature_request=feature_request,
+                    discovered_packages=discovered_packages,
+                    package_mappings=package_mappings
+                )
+                
+                if reasoning_result and 'placements' in reasoning_result:
+                    placement_suggestions = reasoning_result['placements']
+                    print(f"    ✓ LLM reasoning found {len(placement_suggestions)} placements")
+            
+            # ✓ FALLBACK: If no LLM or reasoning failed, use discovered packages intelligently
+            if not placement_suggestions and discovered_packages:
+                # Find packages matching common patterns
+                entity_packages = [p for p in discovered_packages if 'entity' in p.lower() or 'model' in p.lower() or 'domain' in p.lower()]
+                controller_packages = [p for p in discovered_packages if 'controller' in p.lower() or 'api' in p.lower() or 'web' in p.lower()]
+                service_packages = [p for p in discovered_packages if 'service' in p.lower() or 'business' in p.lower()]
+                
+                # Use discovered packages or fall back to deepest common package
+                deepest_package = max(discovered_packages, key=lambda p: p.count('.'))
+                
+                if 'entity' in feature_request.lower() and entity_packages:
+                    pkg = entity_packages[0]
+                    placement_suggestions.append({
+                        'type': 'entity',
+                        'package': pkg,
+                        'directory': f"src/main/java/{pkg.replace('.', '/')}",
+                        'filename_pattern': '{Entity}Entity.java',
+                        'purpose': 'JPA entity classes',
+                        'source': 'discovered_package_pattern'
+                    })
+                elif 'entity' in feature_request.lower():
+                    pkg = deepest_package
+                    placement_suggestions.append({
+                        'type': 'entity',
+                        'package': pkg,
+                        'directory': f"src/main/java/{pkg.replace('.', '/')}",
+                        'filename_pattern': '{Entity}Entity.java',
+                        'purpose': 'JPA entity classes',
+                        'source': 'deepest_package_fallback'
+                    })
+                
+                if ('endpoint' in feature_request.lower() or 'controller' in feature_request.lower()) and controller_packages:
+                    pkg = controller_packages[0]
+                    placement_suggestions.append({
+                        'type': 'controller',
+                        'package': pkg,
+                        'directory': f"src/main/java/{pkg.replace('.', '/')}",
+                        'filename_pattern': '{Feature}Controller.java',
+                        'purpose': 'REST controllers',
+                        'source': 'discovered_package_pattern'
+                    })
+                elif 'endpoint' in feature_request.lower() or 'controller' in feature_request.lower():
+                    pkg = deepest_package
+                    placement_suggestions.append({
+                        'type': 'controller',
+                        'package': pkg,
+                        'directory': f"src/main/java/{pkg.replace('.', '/')}",
+                        'filename_pattern': '{Feature}Controller.java',
+                        'purpose': 'REST controllers',
+                        'source': 'deepest_package_fallback'
+                    })
+                
+                if 'service' in feature_request.lower() and service_packages:
+                    pkg = service_packages[0]
+                    placement_suggestions.append({
+                        'type': 'service',
+                        'package': pkg,
+                        'directory': f"src/main/java/{pkg.replace('.', '/')}",
+                        'filename_pattern': '{Feature}Service.java',
+                        'purpose': 'Business logic services',
+                        'source': 'discovered_package_pattern'
+                    })
+                
+                print(f"    ✓ Fallback strategy found {len(placement_suggestions)} placements from discovered packages")
 
         result = {
             'placement_suggestions': placement_suggestions,
-            'confidence_score': len(placement_suggestions) * 0.2 if placement_suggestions else 0.0
+            'confidence_score': len(placement_suggestions) * 0.3 if placement_suggestions else 0.0,
+            'discovery_method': 'discovered_packages' if discovered_packages else 'none',
+            'packages_analyzed': len(structure.get("java_packages", []))
         }
 
         self.structure_inference_cache[cache_key] = result
@@ -855,8 +1131,6 @@ def analyze_context(state: AgentState) -> AgentState:
 
         basic = analysis_result["basic_info"]
         code_analysis = analysis_result["code_analysis"]
-        dependencies = analysis_result["dependencies"]
-        api_patterns = analysis_result["api_patterns"]
         ranked = analysis_result["ranked_elements"]
         structure = analysis_result["structure"]
 
