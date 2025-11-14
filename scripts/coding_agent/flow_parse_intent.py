@@ -257,15 +257,38 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
     from pydantic import BaseModel, Field
     from langchain.agents import create_agent
     from langchain.tools import tool
-    from langchain_core.messages import SystemMessage
-    from langchain_openai import ChatOpenAI
     import json
     import logging
 
     logger = logging.getLogger(__name__)
 
-    # Agent State Management (LangGraph Pattern)
+    # ========================================================================
+    # PLANNED FOR v3.1: LangGraph Multi-Agent Integration
+    # ========================================================================
+    # SpecParsingState is prepared for future multi-agent persona-based 
+    # routing architecture (Engineering Manager → Specialist Agents pattern).
+    # 
+    # Currently UNUSED in v2.x (uses untyped Dict state), but will serve as
+    # the state schema for parse_intent node in LangGraph workflow for v3.1.
+    # 
+    # See: notes/codeanalysis.specparsingstate-future-langgraph-integration.md
+    # ========================================================================
     class SpecParsingState(TypedDict):
+        """
+        State schema for specification parsing phase in LangGraph agent workflow.
+        
+        Prepared for v3.1+ multi-agent architecture. Will be nested in
+        MultiAgentState["engineering_state"] for supervisor pattern routing.
+        
+        Attributes:
+            content: Raw specification markdown being parsed
+            parsed_sections: Breakdown of spec sections by component
+            project_spec: Processed project specification object
+            analysis_context: Context from codebase analysis phase
+        
+        Current Usage (v2.x): None - using untyped Dict state instead
+        Future Usage (v3.1+): LangGraph node state with type safety
+        """
         content: str
         parsed_sections: Dict[str, str]
         project_spec: Optional[ProjectSpec]
@@ -331,7 +354,7 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
             """
             
             response = llm_model.invoke([{"role": "user", "content": prompt}])
-            return response.content
+            return response.content # pyright: ignore[reportReturnType]
             
         except Exception as e:
             logger.warning(f"Error in analyze_project_overview: {e}")
@@ -368,7 +391,7 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
             """
             
             response = llm_model.invoke([{"role": "user", "content": prompt}])
-            return response.content
+            return response.content # pyright: ignore[reportReturnType]
             
         except Exception as e:
             logger.warning(f"Error in extract_architecture_notes: {e}")
@@ -404,7 +427,7 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
             """
             
             response = llm_model.invoke([{"role": "user", "content": prompt}])
-            return response.content
+            return response.content # pyright: ignore[reportReturnType]
             
         except Exception as e:
             logger.warning(f"Error in extract_dependencies_and_guidelines: {e}")
@@ -456,26 +479,32 @@ def _parse_project_spec_content(content: str) -> ProjectSpec:
                         for msg in result["messages"]:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
-                                    project_overview_data = json.loads(msg.content)
+                                    overview_dict = json.loads(msg.content)
+                                    overview = ProjectOverview.model_validate(overview_dict)
+                                    project_overview_data = overview.model_dump()
                                 except Exception as e:
-                                    logger.warning(f"Failed to parse project overview JSON: {e}")
-                                    pass
+                                    logger.warning(f"Failed to parse project overview: {e}. Using defaults.")
+                                    project_overview_data = ProjectOverview().model_dump()
                     elif tool_call['name'] == 'extract_architecture_notes':
                         for msg in result["messages"]:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
-                                    architecture_data = json.loads(msg.content)
+                                    arch_dict = json.loads(msg.content)
+                                    arch_info = ArchitectureInfo.model_validate(arch_dict)
+                                    architecture_data = arch_info.model_dump()
                                 except Exception as e:
-                                    logger.warning(f"Failed to parse architecture JSON: {e}")
-                                    pass
+                                    logger.warning(f"Failed to parse architecture info: {e}. Using defaults.")
+                                    architecture_data = ArchitectureInfo().model_dump()
                     elif tool_call['name'] == 'extract_dependencies_and_guidelines':
                         for msg in result["messages"]:
                             if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
                                 try:
-                                    dependencies_data = json.loads(msg.content)
+                                    deps_dict = json.loads(msg.content)
+                                    deps_info = DependencyInfo.model_validate(deps_dict)
+                                    dependencies_data = deps_info.model_dump()
                                 except Exception as e:
-                                    logger.warning(f"Failed to parse dependencies JSON: {e}")
-                                    pass
+                                    logger.warning(f"Failed to parse dependency info: {e}. Using defaults.")
+                                    dependencies_data = DependencyInfo().model_dump()
         
         # Build ProjectSpec from agent analysis
         spec = ProjectSpec(
