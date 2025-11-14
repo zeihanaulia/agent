@@ -123,7 +123,6 @@ def read_project_specification(codebase_path: str) -> Optional[ProjectSpec]:
         ProjectSpec instance if found and parsed, None otherwise
     """
     import os
-    import re
 
     # Priority order for spec files
     spec_files = [
@@ -705,7 +704,6 @@ def write_todo_file(
         Path to written file
     """
     import os
-    from datetime import datetime
     
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -1794,12 +1792,17 @@ Key capabilities:
 
 Always reason about the specific framework's patterns and conventions."""
 
-    # Create subagent with framework knowledge tools
-    return create_deep_agent(
-        system_prompt=system_prompt,
-        model=analysis_model,
-        name="framework_planner"
-    )
+    # ✅ Best practice: Define subagent with complete metadata following DeepAgents patterns
+    framework_planner_config = {
+        "name": "framework_planner",
+        "description": "Specializes in dynamic framework planning for Spring Boot, Django, Node.js, React, and other major frameworks. Creates detailed file structures, applies SOLID principles, and follows framework-specific conventions.",
+        "system_prompt": system_prompt,
+        "tools": [],  # Framework planning is reasoning-based, no additional tools needed
+        "model": analysis_model,
+        "middleware": []  # Could add custom middleware for framework analysis if needed
+    }
+
+    return create_deep_agent(**framework_planner_config)
 
 
 def plan_files_with_subagent(
@@ -1832,7 +1835,7 @@ def plan_files_with_subagent(
         # Create framework planner subagent
         framework_planner = create_framework_planner_subagent(subagent_model)
 
-        # Build comprehensive planning prompt
+        # Build comprehensive planning prompt with output control strategy
         planning_prompt = f"""
 Analyze this feature request and create a comprehensive file structure plan.
 
@@ -1910,6 +1913,14 @@ Return your analysis in this JSON format:
   }}
 }}
 
+CRITICAL OUTPUT REQUIREMENTS (DeepAgents Best Practice):
+- Return ONLY valid JSON, no additional text or explanations
+- Include all reasoning within the JSON structure itself
+- Ensure framework-specific details are comprehensive and accurate
+- If uncertain about framework conventions, use generic best practices
+- All file paths must follow the target framework's conventions
+- Entity names must match the detected_entities list provided
+
 Focus on {framework} best practices and patterns. Be specific about file paths, naming conventions, and framework features.
 """
 
@@ -1930,7 +1941,7 @@ Focus on {framework} best practices and patterns. Be specific about file paths, 
                         return _convert_subagent_result_to_suggestion(
                             planning_result, detected_entities, framework
                         )
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError: # pyright: ignore[reportPossiblyUnboundVariable]
                         continue
 
         # Fallback if parsing fails
@@ -2551,56 +2562,12 @@ def infer_new_files_needed(
     
     # Detect framework from context or parameter
     framework_str = str(framework).lower() if framework else "generic"
-    
-    # Feature analysis
-    has_entity = any(word in request_lower for word in ["product", "user", "order", "item", "entity", "model", "entity", "class", "object", "inventory", "management"])
-    has_api = any(word in request_lower for word in ["endpoint", "api", "rest", "http", "post", "get", "put", "delete", "crud"])
-    has_service = any(word in request_lower for word in ["service", "business", "logic", "operation", "processing"])
-    has_dto = any(word in request_lower for word in ["request", "response", "dto", "transfer", "json", "serialize"])
-    has_test = any(word in request_lower for word in ["test", "testing", "unittest", "integration"])
-    
-    suggested_files = []
-    directory_structure = {}
-    creation_order = []
-    best_practices = []
-    framework_conventions = []
-    
-    # Apply project specifications to influence planning
-    if project_spec:
-        # Override framework detection with project spec if available
-        if project_spec.framework:
-            spec_framework = project_spec.framework.lower()
-            if "spring boot" in spec_framework or "springboot" in spec_framework:
-                is_spring_boot = True
-                is_django = False
-                is_nodejs = False
-            elif "django" in spec_framework:
-                is_spring_boot = False
-                is_django = True
-                is_nodejs = False
-            elif "node" in spec_framework or "express" in spec_framework:
-                is_spring_boot = False
-                is_django = False
-                is_nodejs = True
-        
-        # Apply project spec architecture notes to influence planning
-        if project_spec.architecture_notes:
-            for note in project_spec.architecture_notes:
-                best_practices.append(f"Architecture: {note}")
-        
-        # Apply project spec quality checklist
-        if project_spec.quality_checklist:
-            for item in project_spec.quality_checklist:
-                best_practices.append(f"Quality: {item}")
-        
-        # Apply project spec code style rules
-        if project_spec.code_style_rules:
-            for rule in project_spec.code_style_rules:
-                framework_conventions.append(f"Code Style: {rule}")
-    
+
     # Use subagent for dynamic framework planning instead of hardcoded logic
+    # WHY SUBAGENT: This isolates complex multi-step planning work from main agent context
+    # Prevents context bloat when analyzing multiple frameworks and their conventions
     try:
-        print("  🤖 Using subagent for dynamic framework planning...")
+        print("  🤖 Using subagent for dynamic framework planning (context isolation)...")
         framework_str = str(framework) if framework else "Generic"
         return plan_files_with_subagent(
             feature_request=feature_request,
@@ -2617,9 +2584,7 @@ def infer_new_files_needed(
         return _create_basic_file_structure(
             detected_entities=detected_entities,
             framework=framework_str
-        )
-    
-    # Generate structured todo list for user tracking
+        )    # Generate structured todo list for user tracking
 
 
 # ==============================================================================
