@@ -242,118 +242,317 @@ def _is_project_spec_file(content: str) -> bool:
 
 def _parse_project_spec_content(content: str) -> ProjectSpec:
     """
-    Parse markdown content into a ProjectSpec object.
+    Parse markdown content into a ProjectSpec object using intelligent agent-based parsing.
+    
+    This function uses DeepAgents middleware with LangGraph state management for
+    comprehensive document analysis, replacing the previous manual regex approach.
 
     Args:
         content: Markdown content to parse
 
     Returns:
-        ProjectSpec instance
+        ProjectSpec instance with extracted information
+    """
+    from typing import TypedDict, List, Dict, Any, Optional
+    from pydantic import BaseModel, Field
+    from langchain.agents import create_agent
+    from langchain.tools import tool
+    from langchain_core.messages import SystemMessage
+    from langchain_openai import ChatOpenAI
+    import json
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Agent State Management (LangGraph Pattern)
+    class SpecParsingState(TypedDict):
+        content: str
+        parsed_sections: Dict[str, str]
+        project_spec: Optional[ProjectSpec]
+        analysis_context: Dict[str, Any]
+
+    # Structured Output Models (Pydantic)
+    class ProjectOverview(BaseModel):
+        """Project overview information"""
+        project_name: str = Field(description="Name of the project", default="Unknown")
+        purpose: str = Field(description="Project purpose and description", default="")
+        language: str = Field(description="Primary programming language", default="Java")
+        framework: str = Field(description="Main framework being used", default="Spring Boot")
+        build_tool: str = Field(description="Build tool (Maven/Gradle)", default="Gradle")
+        packaging: str = Field(description="Packaging type (JAR/WAR)", default="JAR")
+        modules: List[str] = Field(description="Project modules", default_factory=list)
+
+    class ArchitectureInfo(BaseModel):
+        """Architecture and design information"""
+        layering: str = Field(description="Layered architecture pattern", default="")
+        dto_placement: str = Field(description="DTO placement strategy", default="")
+        service_pattern: str = Field(description="Service layer pattern", default="")
+        validation_layer: str = Field(description="Validation approach", default="")
+        exception_handling: str = Field(description="Exception handling strategy", default="")
+
+    class DependencyInfo(BaseModel):
+        """Dependency information"""
+        baseline: List[str] = Field(description="Required baseline dependencies", default_factory=list)
+        optional: List[str] = Field(description="Optional dependencies", default_factory=list)
+
+    # Import LLM setup for consistent model configuration
+    try:
+        from models.llm_setup import setup_model
+        _, _, llm_model = setup_model()
+    except Exception as e:
+        logger.warning(f"Failed to setup LLM model: {e}. Using fallback parser.")
+        return _fallback_parse_project_spec(content)
+
+    # Agent Tools for Document Analysis
+    @tool
+    def analyze_project_overview(content: str) -> str:
+        """
+        Analyze document content to extract project overview information.
+        Looks for project details like name, purpose, language, framework, etc.
+        """
+        try:
+            prompt = f"""
+            Analyze the following project specification document and extract project overview information.
+            
+            Document content:
+            {content[:4000]}  # Limit for token efficiency
+            
+            Extract and return a JSON object with the following fields:
+            - project_name: Name of the project
+            - purpose: Project purpose and description  
+            - language: Primary programming language
+            - framework: Main framework
+            - build_tool: Build tool (Maven/Gradle/etc)
+            - packaging: Packaging type (JAR/WAR/etc)
+            - modules: List of project modules
+            
+            If information is not found, use reasonable defaults for the technology stack.
+            Return only valid JSON.
+            """
+            
+            response = llm_model.invoke([{"role": "user", "content": prompt}])
+            return response.content
+            
+        except Exception as e:
+            logger.warning(f"Error in analyze_project_overview: {e}")
+            return json.dumps({
+                "project_name": "Unknown",
+                "purpose": "",
+                "language": "Java", 
+                "framework": "Spring Boot",
+                "build_tool": "Gradle",
+                "packaging": "JAR",
+                "modules": []
+            })
+
+    @tool
+    def extract_architecture_notes(content: str) -> str:
+        """
+        Extract architecture and design pattern information from the document.
+        """
+        try:
+            prompt = f"""
+            Analyze the following document for architecture and design information.
+            
+            Document content:
+            {content[:4000]}
+            
+            Extract and return a JSON object with architecture information:
+            - layering: Layered architecture approach
+            - dto_placement: DTO placement strategy
+            - service_pattern: Service layer pattern  
+            - validation_layer: Validation approach
+            - exception_handling: Exception handling strategy
+            
+            Return only valid JSON.
+            """
+            
+            response = llm_model.invoke([{"role": "user", "content": prompt}])
+            return response.content
+            
+        except Exception as e:
+            logger.warning(f"Error in extract_architecture_notes: {e}")
+            return json.dumps({
+                "layering": "",
+                "dto_placement": "",
+                "service_pattern": "",
+                "validation_layer": "",
+                "exception_handling": ""
+            })
+
+    @tool
+    def extract_dependencies_and_guidelines(content: str) -> str:
+        """
+        Extract dependencies, testing guidelines, and other technical requirements.
+        """
+        try:
+            prompt = f"""
+            Analyze the following document for dependencies and guidelines.
+            
+            Document content:
+            {content[:4000]}
+            
+            Extract and return a JSON object with:
+            - baseline_dependencies: List of required dependencies
+            - optional_dependencies: List of optional dependencies
+            - workflow_guidelines: List of workflow guidelines
+            - quality_checklist: List of quality checklist items
+            - security_guidelines: List of security guidelines
+            - testing_guidelines: Testing framework information
+            
+            Return only valid JSON.
+            """
+            
+            response = llm_model.invoke([{"role": "user", "content": prompt}])
+            return response.content
+            
+        except Exception as e:
+            logger.warning(f"Error in extract_dependencies_and_guidelines: {e}")
+            return json.dumps({
+                "baseline_dependencies": [],
+                "optional_dependencies": [],
+                "workflow_guidelines": [],
+                "quality_checklist": [],
+                "security_guidelines": [],
+                "testing_guidelines": {}
+            })
+
+    # Create Agent-based Parser
+    try:
+        system_prompt = """
+        You are an expert project specification parser. Your task is to analyze project 
+        specification documents and extract structured information using the available tools.
+        
+        Use the tools to:
+        1. Extract project overview information
+        2. Identify architecture patterns and design notes  
+        3. Parse dependencies and guidelines
+        
+        Combine the results from all tools to provide a comprehensive analysis.
+        Be thorough but efficient - focus on the most important information.
+        """
+        
+        agent = create_agent(
+            model=llm_model,
+            tools=[analyze_project_overview, extract_architecture_notes, extract_dependencies_and_guidelines],
+            system_prompt=system_prompt
+        )
+        
+        # Execute Agent Workflow
+        result = agent.invoke({
+            "messages": [{"role": "user", "content": f"Parse this project specification document:\n\n{content}"}]
+        })
+        
+        # Extract tool outputs from agent messages
+        project_overview_data = {}
+        architecture_data = {}
+        dependencies_data = {}
+        
+        for message in result.get("messages", []):
+            if hasattr(message, 'tool_calls') and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call['name'] == 'analyze_project_overview':
+                        # Find corresponding tool message
+                        for msg in result["messages"]:
+                            if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
+                                try:
+                                    project_overview_data = json.loads(msg.content)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse project overview JSON: {e}")
+                                    pass
+                    elif tool_call['name'] == 'extract_architecture_notes':
+                        for msg in result["messages"]:
+                            if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
+                                try:
+                                    architecture_data = json.loads(msg.content)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse architecture JSON: {e}")
+                                    pass
+                    elif tool_call['name'] == 'extract_dependencies_and_guidelines':
+                        for msg in result["messages"]:
+                            if hasattr(msg, 'tool_call_id') and msg.tool_call_id == tool_call['id']:
+                                try:
+                                    dependencies_data = json.loads(msg.content)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse dependencies JSON: {e}")
+                                    pass
+        
+        # Build ProjectSpec from agent analysis
+        spec = ProjectSpec(
+            project_name=project_overview_data.get("project_name", "Unknown"),
+            purpose=project_overview_data.get("purpose", ""),
+            language=project_overview_data.get("language", "Java"),
+            framework=project_overview_data.get("framework", "Spring Boot"),
+            build_tool=project_overview_data.get("build_tool", "Gradle"),
+            packaging=project_overview_data.get("packaging", "JAR"),
+            modules=project_overview_data.get("modules", []),
+            architecture_notes=architecture_data,
+            dependencies={
+                "baseline": dependencies_data.get("baseline_dependencies", []),
+                "optional": dependencies_data.get("optional_dependencies", [])
+            },
+            workflow_guidelines=dependencies_data.get("workflow_guidelines", []),
+            quality_checklist=dependencies_data.get("quality_checklist", []),
+            security_guidelines=dependencies_data.get("security_guidelines", []),
+            testing_guidelines=dependencies_data.get("testing_guidelines", {}),
+            code_style_rules={},  # Can be enhanced with additional tool
+            folder_structure={},  # Can be enhanced with additional tool  
+            build_deploy_instructions={},  # Can be enhanced with additional tool
+            dont_do_list=[]  # Can be enhanced with additional tool
+        )
+        
+        logger.info(f"Successfully parsed project spec: {spec.project_name}")
+        return spec
+        
+    except Exception as e:
+        logger.error(f"Agent-based parsing failed: {e}")
+        # Fallback to basic parsing
+        return _fallback_parse_project_spec(content)
+
+
+def _fallback_parse_project_spec(content: str) -> ProjectSpec:
+    """
+    Fallback parser for when agent-based parsing fails.
+    Uses simple heuristics to extract basic information.
     """
     import re
-
-    # Initialize with defaults
-    spec = ProjectSpec(
-        project_name="Unknown",
-        purpose="",
-        language="Java",
-        framework="Spring Boot",
+    
+    # Extract project name from title or filename patterns
+    project_name = "Unknown"
+    title_match = re.search(r'^#\s+(.+?)(?:\n|$)', content, re.MULTILINE)
+    if title_match:
+        project_name = title_match.group(1).strip()
+    
+    # Detect language and framework from content
+    language = "Java"
+    framework = "Spring Boot"
+    
+    if "typescript" in content.lower() or "node" in content.lower():
+        language = "TypeScript"
+        framework = "Node.js"
+    elif "python" in content.lower() or "django" in content.lower():
+        language = "Python" 
+        framework = "Django"
+    elif "react" in content.lower():
+        language = "TypeScript"
+        framework = "React"
+    
+    # Extract purpose from first paragraph or description
+    purpose = ""
+    lines = content.split('\n')
+    for line in lines:
+        if line.strip() and not line.startswith('#') and len(line.strip()) > 50:
+            purpose = line.strip()[:200]  # First meaningful line, truncated
+            break
+    
+    return ProjectSpec(
+        project_name=project_name,
+        purpose=purpose,
+        language=language,
+        framework=framework,
         build_tool="Gradle",
         packaging="JAR"
     )
-
-    # Parse sections using regex patterns
-    sections = _extract_markdown_sections(content)
-
-    # Project Overview
-    if "## 🧠 project overview" in sections:
-        overview = sections["## 🧠 project overview"]
-        spec.project_name = _extract_after_colon(overview, "name:")
-        spec.purpose = _extract_after_colon(overview, "purpose:")
-        spec.language = _extract_after_colon(overview, "language:")
-        spec.framework = _extract_after_colon(overview, "framework:")
-        spec.build_tool = _extract_after_colon(overview, "build tool:")
-        spec.packaging = _extract_after_colon(overview, "packaging:")
-
-        # Extract modules
-        modules_match = re.search(r'modules:\s*\n((?:  - .+\n?)+)', overview, re.IGNORECASE)
-        if modules_match:
-            modules_text = modules_match.group(1)
-            spec.modules = re.findall(r'  - (.+)', modules_text)
-
-    # Code Style Rules
-    if "## 🧩 code style rules" in sections:
-        code_style = sections["## 🧩 code style rules"]
-        spec.code_style_rules = {
-            "annotations": _extract_list_items(code_style, "annotations:"),
-            "naming_conventions": _extract_key_value_pairs(code_style, "naming conventions:"),
-            "indentation": _extract_after_colon(code_style, "indentation:"),
-            "package_structure": _extract_after_colon(code_style, "package structure:")
-        }
-
-    # Architecture Notes
-    if "## 🧭 architecture notes" in sections:
-        arch_notes = sections["## 🧭 architecture notes"]
-        spec.architecture_notes = {
-            "layering": _extract_after_colon(arch_notes, "layering:"),
-            "dto_placement": _extract_after_colon(arch_notes, "dto placement:"),
-            "service_pattern": _extract_after_colon(arch_notes, "service pattern:"),
-            "validation_layer": _extract_after_colon(arch_notes, "validation layer:"),
-            "exception_handling": _extract_after_colon(arch_notes, "exception handling:")
-        }
-
-    # Dependencies
-    if "## 🧱 dependencies" in sections:
-        deps = sections["## 🧱 dependencies"]
-        spec.dependencies = {
-            "baseline": _extract_list_items(deps, "baseline"),
-            "optional": _extract_list_items(deps, "optional")
-        }
-
-    # Testing Guidelines
-    if "## 🧪 testing guidelines" in sections:
-        testing = sections["## 🧪 testing guidelines"]
-        spec.testing_guidelines = {
-            "unit_test_framework": _extract_after_colon(testing, "unit tests:"),
-            "integration_test_framework": _extract_after_colon(testing, "integration tests:"),
-            "coverage_target": _extract_after_colon(testing, "test coverage target:")
-        }
-
-    # Workflow Guidelines
-    if "## 🧩 workflow" in sections:
-        workflow = sections["## 🧩 workflow"]
-        spec.workflow_guidelines = _extract_list_items(workflow, "")
-
-    # Don't Do List
-    if "## 🧩 don't do this" in sections:
-        dont_do = sections["## 🧩 don't do this"]
-        spec.dont_do_list = _extract_list_items(dont_do, "")
-
-    # Folder Structure
-    if "## 🧩 example folder structure" in sections:
-        folder_struct = sections["## 🧩 example folder structure"]
-        spec.folder_structure = _extract_folder_structure(folder_struct)
-
-    # Quality Checklist
-    if "## ✅ quality checklist" in sections:
-        checklist = sections["## ✅ quality checklist"]
-        spec.quality_checklist = _extract_list_items(checklist, "")
-
-    # Build & Deploy
-    if "## 🚀 build & deploy" in sections:
-        build_deploy = sections["## 🚀 build & deploy"]
-        spec.build_deploy_instructions = {
-            "build": _extract_after_colon(build_deploy, "build:"),
-            "run": _extract_after_colon(build_deploy, "run local:"),
-            "deploy": _extract_after_colon(build_deploy, "deploy:")
-        }
-
-    # Security Guidelines
-    if "## 🔒 security guidelines" in sections:
-        security = sections["## 🔒 security guidelines"]
-        spec.security_guidelines = _extract_list_items(security, "")
-
-    return spec
 
 
 def _extract_markdown_sections(content: str) -> Dict[str, str]:
