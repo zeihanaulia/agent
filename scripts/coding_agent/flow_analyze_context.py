@@ -882,12 +882,36 @@ Format as JSON.
             plan['analyses_to_run'].append('code_placement')
             print(f"  📍 Code placement analysis will be performed (request type: {request_type})")
 
-        total_budget = self.max_tokens
-        base_allocation = max(100, total_budget // len(plan['analyses_to_run']))
+        # ✅ CONFIGURABLE TOKEN BUDGETS from environment variables
+        import os
+        total_budget = int(os.getenv('ANALYSIS_MAX_TOKENS', self.max_tokens))
+        
+        # Handle unlimited budget (-1)
+        if total_budget == -1:
+            print("  🎯 UNLIMITED BUDGET MODE: No token restrictions for benchmarking")
+            total_budget = float('inf')  # Use infinity for unlimited
+            unlimited_budget = True
+        else:
+            unlimited_budget = False
+        
+        min_budget_per_analysis = int(os.getenv('ANALYSIS_MIN_BUDGET_PER_ANALYSIS', 100))
+        strict_budget = os.getenv('ANALYSIS_STRICT_BUDGET', 'false').lower() == 'true'
+        
+        if unlimited_budget:
+            # For unlimited budget, give each analysis a very large allocation
+            base_allocation = float('inf')
+        else:
+            base_allocation = max(min_budget_per_analysis, total_budget // len(plan['analyses_to_run']))
+        
         for analysis in plan['analyses_to_run']:
             plan['token_budget'][analysis] = base_allocation
+        
+        # Store budget settings for enforcement
+        plan['unlimited_budget'] = unlimited_budget
+        plan['strict_budget'] = strict_budget
 
-        print(f"  📋 Analysis plan: {len(plan['analyses_to_run'])} analyses")
+        budget_desc = "unlimited" if unlimited_budget else f"{total_budget} tokens"
+        print(f"  📋 Analysis plan: {len(plan['analyses_to_run'])} analyses (budget: {budget_desc}, strict: {strict_budget})")
         return plan
 
     def _execute_selective_analysis(
@@ -985,7 +1009,7 @@ Format as JSON.
             if tokens_used > budget:
                 print(f"  ⚠️ {analysis} exceeded budget: {tokens_used}/{budget} tokens")
                 if plan.get('strict_budget', False):
-                    print(f"  🛑 Stopping analysis due to strict budget mode")
+                    print("  🛑 Stopping analysis due to strict budget mode")
                     results['budget_exceeded'] = True
                     results['stopped_at'] = analysis
                     break
@@ -1145,14 +1169,14 @@ Format as JSON.
         tokenizer_type, tokenizer = self.tokenizer
         
         # Try tiktoken (most accurate)
-        if tokenizer_type == 'tiktoken':
+        if tokenizer_type == 'tiktoken' and tokenizer is not None:
             try:
                 return len(tokenizer.encode(text))
             except Exception:
                 pass
         
         # Try LangChain
-        elif tokenizer_type == 'langchain':
+        elif tokenizer_type == 'langchain' and tokenizer is not None:
             try:
                 return tokenizer.get_num_tokens(text)
             except Exception:
@@ -1825,7 +1849,13 @@ def analyze_context(state: AgentState) -> AgentState:
     feature_request = state.get("feature_request") or "Analyze codebase structure and patterns"
 
     try:
-        analyzer = AiderStyleRepoAnalyzer(codebase_path, max_tokens=2048)
+        # Respect environment-configured max tokens if set (ANALYSIS_MAX_TOKENS)
+        env_max = os.getenv('ANALYSIS_MAX_TOKENS')
+        try:
+            max_tokens = int(env_max) if env_max is not None else 2048
+        except Exception:
+            max_tokens = 2048
+        analyzer = AiderStyleRepoAnalyzer(codebase_path, max_tokens=max_tokens)
         
         # ✅ Use new method with selective analysis
         analysis_result = analyzer.analyze_with_reasoning(feature_request)
@@ -1877,6 +1907,27 @@ PERFORMANCE METRICS:
                 top_components = ', '.join([name for name, _ in top_elems[:3]])
                 summary += f"\nARCHITECTURE INSIGHTS:\n1. **Main Components**: {top_components}\n"
 
+        # ✅ SAVE RESULTS TO JSON FILE
+        import json
+        from datetime import datetime
+        
+        # Create outputs directory if it doesn't exist
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(exist_ok=True)
+        
+        # Generate timestamped filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        json_filename = f"analysis_result_{timestamp}.json"
+        json_path = outputs_dir / json_filename
+        
+        # Save full analysis result to JSON
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(analysis_result, f, indent=2, default=str)
+            print(f"  💾 Analysis results saved to: {json_path}")
+        except Exception as e:
+            print(f"  ⚠️ Failed to save JSON results: {e}")
+
         state["context_analysis"] = summary
         state["current_phase"] = "context_analysis_complete"
 
@@ -1920,7 +1971,14 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    analyzer = AiderStyleRepoAnalyzer(args.codebase_path, max_tokens=2048, main_model=analysis_model)
+    # Use environment-configured tokens when running standalone
+    env_max = os.getenv('ANALYSIS_MAX_TOKENS')
+    try:
+        max_tokens = int(env_max) if env_max is not None else 2048
+    except Exception:
+        max_tokens = 2048
+
+    analyzer = AiderStyleRepoAnalyzer(args.codebase_path, max_tokens=max_tokens, main_model=analysis_model)
     analysis_result = analyzer.analyze_with_reasoning(args.feature_request)
 
     print("\n🤖 AGENT REASONING RESULTS:")
@@ -2018,6 +2076,27 @@ if __name__ == "__main__":
     # Display Tokens Used
     tokens_used = analysis_result.get('tokens_used', 0)
     print(f"🎫 TOKENS USED: {tokens_used}")
+
+    # ✅ SAVE RESULTS TO JSON FILE
+    import json
+    from datetime import datetime
+    
+    # Create outputs directory if it doesn't exist
+    outputs_dir = Path("outputs")
+    outputs_dir.mkdir(exist_ok=True)
+    
+    # Generate timestamped filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_filename = f"analysis_result_{timestamp}.json"
+    json_path = outputs_dir / json_filename
+    
+    # Save full analysis result to JSON
+    try:
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(analysis_result, f, indent=2, default=str)
+        print(f"💾 Analysis results saved to: {json_path}")
+    except Exception as e:
+        print(f"⚠️ Failed to save JSON results: {e}")
 
     print("\n✅ Agent reasoning analysis completed successfully!")
 

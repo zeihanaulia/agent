@@ -2240,6 +2240,7 @@ def flow_parse_intent(
                         
                         # Try to parse as JSON with improved extraction
                         import json
+                        import re
                         try:
                             print("    🔧 Attempting direct JSON parse...")
                             # Strategy 1: Try direct JSON parse first
@@ -2248,28 +2249,79 @@ def flow_parse_intent(
                         except json.JSONDecodeError as direct_err:
                             print(f"    ⚠️ Direct JSON parse failed: {str(direct_err)[:100]}")
                             try:
-                                print("    🔧 Attempting bracket-based JSON extraction...")
-                                # Strategy 2: Look for JSON object by finding matching braces
-                                start_idx = msg_content.find('{')
-                                if start_idx != -1:
-                                    print(f"    📍 Found opening brace at position {start_idx}")
-                                    # Find matching closing brace by counting braces
-                                    brace_count = 0
-                                    for i in range(start_idx, len(msg_content)):
-                                        if msg_content[i] == '{':
-                                            brace_count += 1
-                                        elif msg_content[i] == '}':
-                                            brace_count -= 1
-                                            if brace_count == 0:
-                                                json_str = msg_content[start_idx:i+1]
-                                                print(f"    📍 Extracted JSON substring ({len(json_str)} characters)")
-                                                deep_analysis_result = json.loads(json_str)
-                                                print("    ✓ Bracket-based JSON parse successful")
-                                                break
+                                print("    🔧 Attempting robust JSON extraction...")
+
+                                # Strategy 2: More robust JSON extraction
+                                # Find all JSON-like blocks and try to parse the largest valid one
+                                json_candidates = []
+
+                                # Look for complete JSON objects (balanced braces)
+                                brace_level = 0
+                                start_pos = -1
+                                for i, char in enumerate(msg_content):
+                                    if char == '{':
+                                        if brace_level == 0:
+                                            start_pos = i
+                                        brace_level += 1
+                                    elif char == '}':
+                                        brace_level -= 1
+                                        if brace_level == 0 and start_pos != -1:
+                                            json_candidate = msg_content[start_pos:i+1]
+                                            json_candidates.append((len(json_candidate), json_candidate))
+                                            start_pos = -1
+
+                                # Try parsing candidates from largest to smallest
+                                for length, candidate in sorted(json_candidates, reverse=True):
+                                    try:
+                                        print(f"    📍 Trying JSON candidate ({length} chars)...")
+                                        deep_analysis_result = json.loads(candidate)
+                                        print("    ✓ Robust JSON parse successful")
+                                        break
+                                    except json.JSONDecodeError:
+                                        continue
                                 else:
-                                    print("    ❌ No opening brace found in response")
-                            except (json.JSONDecodeError, IndexError) as bracket_err:
-                                print(f"    ❌ Bracket-based parse failed: {str(bracket_err)[:100]}")
+                                    # If no complete JSON found, try to find and fix common issues
+                                    print("    🔧 Attempting JSON repair...")
+
+                                    # Find the last { and first } after it to get the main JSON block
+                                    last_open = msg_content.rfind('{')
+                                    if last_open != -1:
+                                        # Look for the matching closing brace
+                                        remaining = msg_content[last_open:]
+                                        brace_count = 0
+                                        end_pos = -1
+                                        for i, char in enumerate(remaining):
+                                            if char == '{':
+                                                brace_count += 1
+                                            elif char == '}':
+                                                brace_count -= 1
+                                                if brace_count == 0:
+                                                    end_pos = last_open + i + 1
+                                                    break
+
+                                        if end_pos != -1 and end_pos > last_open:
+                                            json_str = msg_content[last_open:end_pos]
+                                            print(f"    📍 Extracted JSON block ({len(json_str)} chars)")
+
+                                            # Try some basic repairs
+                                            # Remove trailing commas before closing braces/brackets
+                                            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+
+                                            try:
+                                                deep_analysis_result = json.loads(json_str)
+                                                print("    ✓ JSON repair successful")
+                                            except json.JSONDecodeError as repair_err:
+                                                print(f"    ❌ JSON repair failed: {str(repair_err)[:100]}")
+                                                deep_analysis_result = None
+                                        else:
+                                            print("    ❌ No valid JSON block found")
+                                            deep_analysis_result = None
+                                    else:
+                                        print("    ❌ No opening brace found")
+                                        deep_analysis_result = None
+
+                            except Exception as robust_err:
+                                print(f"    ❌ Robust extraction failed: {str(robust_err)[:100]}")
                                 deep_analysis_result = None
                         
                         # Process result if parsing succeeded
