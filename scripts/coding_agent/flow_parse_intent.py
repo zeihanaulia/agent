@@ -584,40 +584,6 @@ def _fallback_parse_project_spec(content: str) -> ProjectSpec:
     )
 
 
-def _extract_markdown_sections(content: str) -> Dict[str, str]:
-    """
-    Extract sections from markdown content based on headers.
-
-    Args:
-        content: Markdown content
-
-    Returns:
-        Dictionary of section headers to content
-    """
-    sections = {}
-    lines = content.split('\n')
-    current_section = None
-    current_content = []
-
-    for line in lines:
-        if line.startswith('## '):
-            # Save previous section
-            if current_section:
-                sections[current_section.lower()] = '\n'.join(current_content).strip()
-
-            # Start new section
-            current_section = line
-            current_content = []
-        elif current_section:
-            current_content.append(line)
-
-    # Save last section
-    if current_section:
-        sections[current_section.lower()] = '\n'.join(current_content).strip()
-
-    return sections
-
-
 def _extract_after_colon(text: str, pattern: str) -> str:
     """Extract text after a colon pattern"""
     import re
