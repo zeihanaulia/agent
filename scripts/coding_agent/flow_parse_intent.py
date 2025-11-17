@@ -1420,9 +1420,9 @@ def extract_entities_from_section(feature_request: str, section_keywords: Option
     return list(dict.fromkeys(entities))  # Remove duplicates, preserve order
 
 
-def extract_entities_via_llm(feature_request: str, excluded_terms: Optional[set] = None) -> List[str]:
+def extract_entities_via_llm(feature_request: str, excluded_terms: Optional[set] = None, existing_entities: Optional[Dict[str, str]] = None) -> List[str]:
     """
-    Extract domain entities using LLM SEMANTIC REASONING.
+    Extract domain entities using LLM SEMANTIC REASONING with optional enhanced reasoning chain.
     
     This is the PRIMARY extraction method. LLM semantic understanding is critical because:
     - Regex cannot handle case variations (courier vs Courier)
@@ -1436,6 +1436,7 @@ def extract_entities_via_llm(feature_request: str, excluded_terms: Optional[set]
     Args:
         feature_request: The full specification text
         excluded_terms: Terms to filter out from results (technical terms)
+        existing_entities: Optional dict of existing entities for enhanced reasoning
         
     Returns:
         List of extracted domain entities in PascalCase
@@ -1450,9 +1451,34 @@ def extract_entities_via_llm(feature_request: str, excluded_terms: Optional[set]
     if excluded_terms is None:
         excluded_terms = set()
     
+    # Try enhanced reasoning chain first if existing entities are provided
+    if existing_entities:
+        try:
+            from .domain_reasoning_chain import enhanced_entity_extraction_with_reasoning
+            entities, reasoning = enhanced_entity_extraction_with_reasoning(
+                feature_request=feature_request,
+                existing_entities=existing_entities,
+                excluded_terms=excluded_terms
+            )
+            print("✅ Enhanced entity extraction with reasoning completed")
+            print(f"   📋 Spec Compliance: {reasoning.spec_compliance_score:.1f}/1.0")
+            print(f"   🏗️  Approach: {reasoning.architectural_approach}")
+            print(f"   🎯 Entities: {entities}")
+            return entities
+        except Exception as e:
+            print(f"⚠️ Enhanced reasoning failed: {e}, falling back to basic LLM extraction")
+    
+    # Fallback to basic LLM extraction
+    return _basic_llm_entity_extraction(feature_request, excluded_terms)
+
+
+def _basic_llm_entity_extraction(feature_request: str, excluded_terms: Optional[set] = None) -> List[str]:
+    """Basic LLM entity extraction without enhanced reasoning"""
+    if excluded_terms is None:
+        excluded_terms = set()
+    
     try:
         import os
-        import litellm
         
         # Setup LLM from environment configuration
         llm_model = os.getenv("LITELLM_MODEL", "gpt-4o-mini")
@@ -1463,58 +1489,72 @@ def extract_entities_via_llm(feature_request: str, excluded_terms: Optional[set]
             raise RuntimeError("LITELLM_VIRTUAL_KEY environment variable not set")
         
         system_prompt = """You are an expert software architect analyzing business requirements.
-Your task is to identify ONLY the MAIN BUSINESS ENTITIES (not technical components).
+Your task is to identify ONLY the MAIN BUSINESS ENTITIES based on the specification's INTENT.
+
+CRITICAL: Read the ENTIRE specification first to understand the intent:
+
+1. If spec says "No new domain entities needed" or "extend existing entity":
+   → Return ONLY existing entities that need modification
+   → DO NOT create new entities even if mentioned
+
+2. If spec says "Expected Implementation: Modify existing [EntityName]":
+   → Return ONLY that entity name for modification
+
+3. If spec says "This is an extension of existing [EntityName] functionality":
+   → Return ONLY that entity name
+
+4. Otherwise, extract main business entities normally
 
 Focus on:
-- Core domain concepts (what the business manages)
+- Core domain concepts (what the business manages)  
 - Entities mentioned multiple times in specification
 - Things that would have their own database table/class
 - Main actors, resources, and workflows
 
 DO NOT include:
 - Technical/framework terms (API, REST, Controller, Service, DTO, Repository, etc.)
-- Adjectives or qualifiers (detailed, comprehensive, full, new, old, etc.)
+- Adjectives or qualifiers (detailed, comprehensive, full, new, old, etc.) 
 - Action words or verbs (create, generate, manage, process, etc.)
 - Data format names (JSON, CSV, PDF, XML, etc.)
 - System/infrastructure terms (database, system, implementation, etc.)
 
 Return as valid JSON: {"entities": ["Entity1", "Entity2", ...]} in PascalCase."""
         
-        user_prompt = f"""Extract main business entities from this specification.
-Be thorough - if something appears multiple times and represents a core domain concept, it's likely an entity.
+        user_prompt = f"""Analyze this specification to understand its INTENT first, then extract entities accordingly.
+
+KEY INSTRUCTION: Look for phrases like:
+- "No new domain entities needed" → Return ONLY existing entities
+- "Modify the existing [Entity] entity" → Return ONLY that entity
+- "Extension of existing [Entity] functionality" → Return ONLY that entity  
+- "Expected Implementation: Modify existing..." → Follow that instruction
 
 Specification:
 ---
-{feature_request[:3000]}
+{feature_request}
 ---
 
-Remember: Semantic reasoning, not pattern matching. Understand the DOMAIN, not just the WORDS.
+CRITICAL: Follow the specification's intent. If it says to modify existing entities (not create new ones), 
+respect that instruction and return ONLY the entities to be modified.
+
 Return ONLY valid JSON with no additional text."""
         
-        # Call LiteLLM - use temperature=1 (gpt-5 doesn't support temperature=0)
-        response = litellm.completion(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            api_key=llm_api_key,
-            api_base=llm_api_base,
-            temperature=1.0  # gpt-5 doesn't support temperature=0, use 1.0 for deterministic behavior
+        # Use ChatOpenAI instead of litellm.completion() for better Azure compatibility
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+        
+        model = ChatOpenAI(
+            api_key=SecretStr(llm_api_key),
+            model=llm_model,  # Keep full model name (gpt-5-mini works)
+            base_url=llm_api_base,
+            temperature=1.0,  # For reasoning models
         )
         
-        # Extract response text - robustly handle different response formats
-        response_text = None
-        try:
-            # Try attribute access first
-            response_text = response.choices[0].message.content  # type: ignore
-        except (AttributeError, TypeError, IndexError):
-            try:
-                # Try dict access
-                response_text = response['choices'][0]['message']['content']  # type: ignore
-            except (KeyError, TypeError):
-                # Fallback to string conversion
-                response_text = str(response)
+        response = model.invoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
+        
+        response_text = str(response.content) if response.content else ""
         
         if not response_text:
             raise ValueError(f"Could not extract text from LLM response: {response}")
@@ -1555,14 +1595,14 @@ def extract_entities_semantic_rule_based(feature_request: str, excluded_terms: O
     """
     Extract domain entities using SEMANTIC RULE-BASED ANALYSIS (no hardcoded patterns).
     
-    This function uses dynamic business context analysis to identify entities:
-    - Analyzes word frequency and co-occurrence patterns
-    - Uses semantic clustering to group related terms
-    - Applies domain-aware filtering without hardcoded keywords
-    - Leverages linguistic patterns for entity recognition
+    IMPROVED STRATEGY (Nov 2025):
+    - Look for PascalCase words (most reliable = actual entity names)
+    - Extract from markdown sections like "## Core Entities"
+    - Use patterns: "entity named X", "the X entity", "X entity"
+    - Avoid generic frequency scoring (noisy for single-mention entities)
+    - Fall back to smart filtering only if above methods fail
     
-    This is a fallback method when LLM is not available, providing semantic
-    understanding without requiring external API calls.
+    This balances accuracy with simplicity - without LLM, we work with available signals.
     
     Args:
         feature_request: The full specification text
@@ -1572,8 +1612,7 @@ def extract_entities_semantic_rule_based(feature_request: str, excluded_terms: O
         List of extracted domain entities in PascalCase
         
     References:
-        - Natural Language Processing for entity extraction
-        - Semantic analysis techniques: https://en.wikipedia.org/wiki/Semantic_analysis
+        - Entity extraction best practices: https://en.wikipedia.org/wiki/Named_entity_recognition
     """
     if excluded_terms is None:
         excluded_terms = set()
@@ -1581,107 +1620,141 @@ def extract_entities_semantic_rule_based(feature_request: str, excluded_terms: O
     import re
     from collections import Counter
     
-    # Convert to lowercase for analysis but preserve original for output
-    text_lower = feature_request.lower()
-    
-    # STEP 1: Extract candidate terms using linguistic patterns
-    candidates = []
-    
-    # Pattern 1: Noun phrases (common entity indicators)
-    # Look for sequences that might be entities
-    noun_patterns = [
-        r'\b[a-z]+(?:\s+[a-z]+){0,2}\b',  # 1-3 word sequences
-    ]
-    
-    for pattern in noun_patterns:
-        matches = re.findall(pattern, text_lower)
-        candidates.extend(matches)
-    
-    # STEP 2: Semantic filtering - remove technical and common words
-    semantic_candidates = []
-    for candidate in candidates:
-        words = candidate.split()
-        
-        # Skip if contains excluded technical terms
-        if any(word in excluded_terms for word in words):
-            continue
-            
-        # Skip common English words and articles
-        common_words = {
-            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-            'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',
-            'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'shall',
-            'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me',
-            'him', 'her', 'us', 'them', 'my', 'your', 'his', 'its', 'our', 'their', 'what', 'when',
-            'where', 'why', 'how', 'all', 'some', 'any', 'every', 'most', 'many', 'much', 'few',
-            'little', 'first', 'last', 'next', 'new', 'old', 'good', 'bad', 'big', 'small', 'long',
-            'short', 'high', 'low', 'right', 'left', 'full', 'empty', 'open', 'closed', 'hot', 'cold'
-        }
-        
-        if not any(word in common_words for word in words):
-            semantic_candidates.append(candidate)
-    
-    # STEP 3: Frequency analysis - entities are mentioned multiple times
-    term_freq = Counter(semantic_candidates)
-    
-    # STEP 4: Semantic clustering - group related terms
-    # Simple approach: terms that appear together frequently
-    term_pairs = []
-    sentences = re.split(r'[.!?]+', feature_request)
-    
-    for sentence in sentences:
-        sentence_lower = sentence.lower()
-        found_terms = []
-        for term in semantic_candidates:
-            if term in sentence_lower:
-                found_terms.append(term)
-        
-        # Record co-occurrences
-        for i, term1 in enumerate(found_terms):
-            for term2 in found_terms[i+1:]:
-                term_pairs.append((term1, term2))
-    
-    pair_freq = Counter(term_pairs)
-    
-    # STEP 5: Score candidates based on multiple semantic factors
-    scored_candidates = []
-    
-    for candidate, freq in term_freq.items():
-        score = 0
-        
-        # Frequency score (mentioned multiple times = likely entity)
-        score += freq * 2
-        
-        # Length score (longer terms more specific)
-        words = candidate.split()
-        if len(words) > 1:
-            score += len(words)
-        
-        # Capitalization patterns in original text (proper nouns)
-        original_matches = re.findall(re.escape(candidate), feature_request, re.IGNORECASE)
-        capitalized_count = sum(1 for match in original_matches if match[0].isupper())
-        score += capitalized_count
-        
-        # Semantic connections (terms that appear with other candidates)
-        connections = sum(1 for pair, count in pair_freq.items() 
-                         if candidate in pair)
-        score += connections * 0.5
-        
-        scored_candidates.append((candidate, score))
-    
-    # STEP 6: Select top candidates and convert to PascalCase
-    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+    # Technical/code keywords to exclude
+    code_keywords = {
+        'add', 'get', 'set', 'int', 'string', 'boolean', 'void', 'static', 'final', 'public', 'private',
+        'protected', 'class', 'interface', 'enum', 'extends', 'implements', 'null', 'true', 'false',
+        'new', 'return', 'import', 'package', 'var', 'let', 'const', 'def', 'yield',
+        'non', 'default', 'float', 'double', 'byte', 'long', 'char', 'short'
+    }
     
     entities = []
-    for candidate, score in scored_candidates[:10]:  # Top 10 candidates
-        if score >= 2:  # Minimum threshold
-            # Convert to PascalCase
-            words = candidate.split()
-            pascal_case = ''.join(word.capitalize() for word in words)
+    
+    # STRATEGY 1: Extract PascalCase words (actual entity names)
+    # Most reliable: Real entity names are written in PascalCase
+    pascal_case_matches = re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)*)\b', feature_request)
+    
+    for match in pascal_case_matches:
+        # Skip if it's a code keyword or framework term
+        if match.lower() not in code_keywords and match.lower() not in excluded_terms:
+            # Skip technical artifacts (Service, Controller, DTO, etc.)
+            if any(match.endswith(suffix) for suffix in (
+                'Service', 'Controller', 'Repository', 'Mapper', 'Converter', 'Formatter',
+                'Request', 'Response', 'DTO', 'Bean', 'Factory', 'Builder', 'Helper',
+                'Listener', 'Handler', 'Manager', 'Utils', 'Config', 'Props', 'Exception'
+            )):
+                continue
             
-            # Ensure it's a valid entity name (starts with capital, alphanumeric)
-            if re.match(r'^[A-Z][A-Za-z0-9]*$', pascal_case):
-                entities.append(pascal_case)
+            # Filter out common English words and weak candidates
+            common_words_strict = {
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+                'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+                'this', 'that', 'these', 'those', 'what', 'when', 'where', 'why', 'how',
+                'all', 'some', 'any', 'every', 'most', 'many', 'much', 'few',
+                'problem', 'statement', 'notes', 'expected', 'requirements', 'implementation',
+                'feature', 'core', 'should', 'check', 'track', 'list', 'modify', 'extend',
+                'alert', 'management', 'notify', 'model', 'data', 'info', 'option'
+            }
+            
+            if match.lower() not in common_words_strict and len(match) >= 4:
+                if match not in entities:
+                    entities.append(match)
+    
+    # STRATEGY 2: Look for explicit entity patterns in spec (SINGLE WORDS ONLY)
+    # Pattern: "extend the Product entity" → extract "Product" only
+    entity_patterns = [
+        r'(?:extend|modify|update|add to|augment)\s+(?:the\s+)?([A-Z][a-z]+)\s+entity',
+        r'the\s+([A-Z][a-z]+)\s+entity',
+        r'domain\s+entities?.*?:\s*([A-Z][a-z]+(?:,\s*[A-Z][a-z]+)*)',
+        r'core\s+entities?.*?:\s*([A-Z][a-z]+(?:,\s*[A-Z][a-z]+)*)',
+    ]
+    
+    for pattern in entity_patterns:
+        matches = re.findall(pattern, feature_request, re.IGNORECASE)
+        for match in matches:
+            # Handle comma-separated lists
+            if ',' in match:
+                names = [n.strip().title() for n in match.split(',')]
+                for name in names:
+                    # Only single-word entities (no spaces)
+                    if ' ' not in name and name not in entities and name.lower() not in code_keywords:
+                        entities.append(name)
+            else:
+                # Single entity name - ensure no spaces
+                entity_name = match.strip().title()
+                if ' ' not in entity_name and entity_name not in entities and entity_name.lower() not in code_keywords:
+                    entities.append(entity_name)
+    
+    # STRATEGY 3: Extract from "## Core Entities" or similar sections (SINGLE WORDS ONLY)
+    section_pattern = r'#{1,4}\s*(?:Core\s+)?Entities.*?(?:\n|$)([\s\S]*?)(?=#{1,4}|\Z)'
+    section_matches = re.findall(section_pattern, feature_request, re.IGNORECASE)
+    
+    for section in section_matches:
+        # Look for bullet points with entity names (single words only)
+        bullet_pattern = r'[-*]\s*`?([A-Z][a-z]+)(?:\s+entity)?`?'
+        bullets = re.findall(bullet_pattern, section)
+        for bullet in bullets:
+            entity_name = bullet.strip().title()
+            # Only single-word entities (no spaces)
+            if ' ' not in entity_name and entity_name not in entities and entity_name.lower() not in code_keywords:
+                entities.append(entity_name)
+    
+    # STRATEGY 4: Smart fallback - SINGLE-WORD domain entities ONLY
+    # Only if we haven't found enough entities yet
+    # STRICT: Only accept single domain words that appear frequently
+    if len(entities) < 2:
+        text_lower = feature_request.lower()
+        
+        # Extract ONLY single-word lowercase candidates
+        single_word_pattern = r'\b([a-z]{4,15})\b'  # 4-15 chars, single words only
+        
+        candidates = re.findall(single_word_pattern, text_lower)
+        
+        # ULTRA-AGGRESSIVE filtering - only domain-relevant words
+        filtered = []
+        for candidate in candidates:
+            # Skip if it's a code keyword
+            if candidate in code_keywords:
+                continue
+            
+            # Skip if it's in excluded terms
+            if candidate in excluded_terms:
+                continue
+            
+            # Skip common English words and technical terms (VERY STRICT)
+            ultra_strict_stop = {
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with',
+                'is', 'are', 'was', 'be', 'have', 'has', 'do', 'does', 'did', 'will', 'would',
+                'this', 'that', 'these', 'those', 'what', 'when', 'where', 'why', 'how', 'who',
+                'all', 'some', 'any', 'every', 'most', 'many', 'much', 'few', 'each',
+                'by', 'from', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+                'problem', 'statement', 'notes', 'expected', 'requirements', 'implementation',
+                'feature', 'core', 'should', 'check', 'track', 'list', 'modify', 'extend',
+                'alert', 'management', 'notify', 'model', 'data', 'info', 'existing', 'need',
+                'create', 'update', 'delete', 'read', 'write', 'save', 'load', 'file', 'path',
+                'include', 'support', 'enable', 'disable', 'allow', 'prevent', 'ensure',
+                'system', 'application', 'project', 'module', 'component', 'service', 'api',
+                'endpoint', 'method', 'function', 'class', 'object', 'instance', 'variable',
+                'field', 'property', 'attribute', 'parameter', 'argument', 'value', 'result',
+                'request', 'response', 'message', 'event', 'action', 'operation', 'process'
+            }
+            if candidate in ultra_strict_stop:
+                continue
+            
+            # Only business/domain words that could be entities
+            # Length: 4-15 chars for reasonable entity names
+            if len(candidate) >= 4 and len(candidate) <= 15:
+                # Only add if not already processed
+                if candidate not in filtered:
+                    filtered.append(candidate)
+        
+        # Score by frequency and take only TOP candidates
+        term_freq = Counter(filtered)
+        for candidate, freq in term_freq.most_common(3):  # Only top 3 single words
+            entity_name = candidate.capitalize()
+            # Only accept if mentioned at least 2+ times (shows relevance)
+            if entity_name not in entities and freq >= 2:
+                entities.append(entity_name)
     
     # Remove duplicates while preserving order
     entities = list(dict.fromkeys(entities))
@@ -1689,23 +1762,43 @@ def extract_entities_semantic_rule_based(feature_request: str, excluded_terms: O
     return entities
 
 
-def extract_entities_from_spec(feature_request: str, analysis_model: Any = None) -> Dict[str, List[str]]:
+def extract_entities_from_spec(
+    feature_request: str, 
+    analysis_model: Any = None,
+    existing_entities: Optional[Dict[str, Any]] = None
+) -> Dict[str, List[str]]:
     """
     Extract all DOMAIN entities from specification using SEMANTIC REASONING.
+    
+    TASK 4 IMPLEMENTATION: Entity-Aware Intent Parsing
+    - Compares request entities with existing entities from Phase 1 discovery
+    - Categorizes as 'entities_to_extend' vs 'entities_to_create'
+    - Enables modification-based workflow instead of always creating new files
 
     Strategy:
     1. Try LLM semantic extraction first (when available) - handles arbitrary specs
     2. If LLM not available or fails, use rule-based semantic extraction - no hardcoded patterns
     3. Extract from structured section ("## 🧩 Core Entities") as final fallback
+    4. Compare with existing entities to determine extend vs create
 
     This function NEVER fails - it always returns entities using the best available method.
 
     Args:
         feature_request: The full specification text containing entity definitions
         analysis_model: Optional LLM model for semantic extraction
+        existing_entities: Dictionary from discover_existing_entities() with:
+            - entities: List of discovered entity names
+            - entity_files: Mapping of entity name to file path
+            - entity_details: Detailed info about each entity (fields, annotations)
 
     Returns:
-        Dictionary with domain entities, services, controllers, and DTOs
+        Dictionary with:
+        - entities: List of all entities mentioned in request
+        - entities_to_extend: Entities that already exist (should be modified)
+        - entities_to_create: New entities (should be created)
+        - services: Corresponding service names
+        - controllers: Corresponding controller names
+        - dtos: Corresponding DTO names
     """
     entities = []
 
@@ -1741,7 +1834,18 @@ def extract_entities_from_spec(feature_request: str, analysis_model: Any = None)
     # STRATEGY 1: Try LLM semantic extraction first (when available)
     if analysis_model:
         try:
-            entities = extract_entities_via_llm(feature_request, excluded_terms)
+            # Pass existing entities for enhanced reasoning if available
+            existing_entities_dict = {}
+            if existing_entities and existing_entities.get("entities"):
+                discovered_entity_names = existing_entities.get("entities", [])
+                for entity_name in discovered_entity_names:
+                    existing_entities_dict[entity_name] = "Existing entity in the codebase"
+            
+            entities = extract_entities_via_llm(
+                feature_request, 
+                excluded_terms, 
+                existing_entities_dict if existing_entities_dict else None
+            )
             if entities:
                 print(f"✓ LLM extracted {len(entities)} entities via semantic reasoning")
             else:
@@ -1769,6 +1873,72 @@ def extract_entities_from_spec(feature_request: str, analysis_model: Any = None)
 
     # Remove duplicates while preserving order
     entities = list(dict.fromkeys(entities))
+    
+    # ============================================================================
+    # TASK 4: Compare with existing entities (entity-aware planning)
+    # ============================================================================
+    entities_to_extend = []
+    entities_to_create = []
+    
+    if existing_entities and existing_entities.get("entities"):
+        discovered_entity_names = existing_entities.get("entities", [])
+        print(f"\n  🔍 [Task 4] Comparing request entities with {len(discovered_entity_names)} discovered entities...")
+        
+        # STRATEGY 1: Regex-based matching (FAST, 99% accuracy for explicit mentions)
+        # Keywords that indicate entity extension rather than creation
+        extend_keywords = [
+            'extend', 'modify', 'enhance', 'update', 'add to', 'augment',
+            'include in', 'incorporate into', 'existing', 'current'
+        ]
+        
+        spec_lower = feature_request.lower()
+        discovered_lower = {e.lower(): e for e in discovered_entity_names}
+        
+        # STEP 1: Look for explicit extend patterns in spec
+        # Pattern: "[keyword] ... [entity]" within reasonable distance
+        for discovered_entity_name, discovered_lower_name in discovered_lower.items():
+            for keyword in extend_keywords:
+                # Pattern: keyword followed by entity (within ~100 chars)
+                pattern = f"{keyword}\\b.*?\\b{discovered_entity_name}\\b"
+                if re.search(pattern, spec_lower, re.IGNORECASE | re.DOTALL):
+                    entities_to_extend.append(discovered_entity_name)
+                    print(f"    ✓ EXTEND: Regex matched '{keyword}...{discovered_entity_name}'")
+                    break
+        
+        # STEP 2: Compare extracted entities with discovered entities
+        for entity in entities:
+            entity_lower = entity.lower()
+            
+            if entity_lower in discovered_lower:
+                # Entity exists → check if should EXTEND
+                original_name = discovered_lower[entity_lower]
+                if original_name not in entities_to_extend:
+                    entities_to_extend.append(original_name)
+                print(f"    ✓ EXTEND: Extracted '{entity}' matches existing '{original_name}'")
+            else:
+                # Entity doesn't exist → should CREATE new file
+                if entity not in entities_to_create:
+                    entities_to_create.append(entity)
+                print(f"    ⊕ CREATE: '{entity}' → new entity")
+        
+        # STEP 3: Fallback - if spec has extend keywords but no entities matched yet
+        # Check if we should extend ALL discovered entities
+        if not entities_to_extend and discovered_entity_names:
+            has_extend_signal = any(kw in spec_lower for kw in extend_keywords)
+            if has_extend_signal:
+                # Spec explicitly mentions extending/modifying but entities extraction missed them
+                # This is rare - only extend if confidence is high
+                for disc_entity in discovered_entity_names:
+                    entities_to_extend.append(disc_entity)
+                print("    ✓ EXTENSION SIGNAL: Spec mentions extend keywords - extending discovered entities")
+        
+        print("  ✓ Entity categorization complete:")
+        print(f"    - Entities to extend: {len(entities_to_extend)} (modify existing files)")
+        print(f"    - Entities to create: {len(entities_to_create)} (new files)")
+    else:
+        # No existing entities discovered → all entities are new
+        entities_to_create = entities.copy()
+        print(f"  ⊕ No existing entities discovered, all {len(entities)} entities will be created")
 
     # Generate corresponding services, controllers, and DTOs
     services = []
@@ -1786,6 +1956,8 @@ def extract_entities_from_spec(feature_request: str, analysis_model: Any = None)
 
     return {
         'entities': entities,
+        'entities_to_extend': entities_to_extend,  # NEW: Entities that exist (modify workflow)
+        'entities_to_create': entities_to_create,  # NEW: Entities to create (creation workflow)
         'services': services,
         'controllers': controllers,
         'dtos': dtos
@@ -1847,16 +2019,224 @@ Always reason about the specific framework's patterns and conventions."""
     return create_deep_agent(**framework_planner_config)
 
 
+def analyze_entity_impact(
+    request_entities: List[str],
+    existing_entities: Dict[str, Any],
+    feature_request: str,
+    analysis_model: Any
+) -> Dict[str, Any]:
+    """
+    Use direct LLM call for entity impact analysis (simpler than SubAgent for this case).
+    
+    TASK 6 IMPLEMENTATION: Entity Impact Analysis
+    
+    This function uses direct LLM reasoning for:
+    - Analyzing field overlap between request and existing entities
+    - Domain boundary clarity assessment
+    - Architectural impact evaluation
+    - SOLID principles compliance check
+    
+    Decision criteria:
+    - EXTEND if: >50% field overlap, same domain, logical extension
+    - CREATE if: Different domain, <30% overlap, violates Single Responsibility Principle
+    
+    Args:
+        request_entities: Entities mentioned in feature request
+        existing_entities: Dictionary from Phase 1 discovery with:
+            - entities: List of discovered entity names
+            - entity_files: Mapping of entity name to file path
+            - entity_details: Detailed info (fields, annotations, methods)
+        feature_request: Full feature specification text
+        analysis_model: LLM model for reasoning
+    
+    Returns:
+        Dictionary with:
+        - decisions: Dict[str, str] - Entity name → "extend" or "create"
+        - reasoning: Dict[str, str] - Entity name → Reasoning explanation
+        - confidence: Dict[str, float] - Entity name → Confidence score (0-1)
+    """
+    from langchain_openai import ChatOpenAI
+    from pydantic import SecretStr
+    import os as os_module
+    
+    if not analysis_model:
+        raise ValueError("Analysis model required for entity impact analysis")
+    
+    if not existing_entities or not existing_entities.get("entities"):
+        # No existing entities → all request entities should be created
+        return {
+            "decisions": {entity: "create" for entity in request_entities},
+            "reasoning": {entity: "No existing entities found in codebase" for entity in request_entities},
+            "confidence": {entity: 1.0 for entity in request_entities}
+        }
+    
+    print("\n  🤖 [Task 6] Analyzing entity impact with LLM reasoning...")
+    
+    try:
+        # Prepare analysis context
+        entity_details_str = ""
+        for entity_name in existing_entities.get("entities", []):
+            details = existing_entities.get("entity_details", {}).get(entity_name, {})
+            fields = details.get("fields", [])
+            file_path = details.get("file_path", "Unknown")
+            entity_details_str += f"\n- **{entity_name}**:\n"
+            entity_details_str += f"  - File: {file_path}\n"
+            entity_details_str += f"  - Fields: {', '.join(fields) if fields else 'No fields detected'}\n"
+        
+        system_prompt = """You are an expert software architect specializing in domain-driven design and entity analysis.
+
+Your task is to analyze entity relationships and decide whether to EXTEND existing entities or CREATE new ones.
+
+ANALYSIS CRITERIA:
+
+1. **Field Overlap Analysis**:
+   - Calculate similarity between request entity fields and existing entity fields
+   - >70% overlap → Strong EXTEND candidate
+   - 40-70% overlap → Moderate EXTEND (check domain)
+   - <40% overlap → Likely CREATE
+
+2. **Domain Boundary Analysis**:
+   - Same business domain → Prefer EXTEND
+   - Different domains → Prefer CREATE
+   - Cross-cutting concerns → Evaluate carefully
+
+3. **Architectural Impact**:
+   - Single Responsibility Principle: Does extension violate SRP?
+   - Open-Closed Principle: Can we extend without modifying core behavior?
+   - Cohesion: Do fields belong together logically?
+
+4. **Long-term Maintainability**:
+   - Will extension make entity too complex?
+   - Is this a temporary feature or core domain change?
+   - How many other services depend on this entity?
+
+DECISION RULES:
+- EXTEND if: Same domain + >50% overlap + doesn't violate SRP
+- CREATE if: Different domain OR <30% overlap OR violates SRP
+- EXTEND (with caution) if: 30-50% overlap + same domain + high cohesion
+
+OUTPUT FORMAT (valid JSON only):
+{
+  "entity_name": {
+    "decision": "extend" or "create",
+    "reasoning": "Detailed explanation of decision",
+    "confidence": 0.0 to 1.0,
+    "field_overlap_percent": 0-100,
+    "domain_match": true/false,
+    "srp_violation": true/false
+  }
+}
+
+Be thorough in your analysis. Consider all factors before making a decision."""
+        
+        user_prompt = f"""Analyze entity impact for feature request:
+
+**Feature Request**: {feature_request[:500]}...
+
+**Request Entities**: {', '.join(request_entities)}
+
+**Existing Entities in Codebase**:{entity_details_str}
+
+For each request entity, analyze:
+1. Which existing entity (if any) it's most similar to
+2. Field overlap percentage
+3. Domain boundary match
+4. Whether extending would violate SOLID principles
+
+Return decision for each request entity: "extend" (with which existing entity) or "create" (new entity).
+Provide detailed reasoning and confidence score in valid JSON format only."""
+        
+        print(f"  📊 Analyzing {len(request_entities)} request entities against {len(existing_entities.get('entities', []))} existing entities...")
+        
+        # Use ChatOpenAI (best practice - handles Azure model names properly)
+        api_key = os_module.getenv('LITELLM_VIRTUAL_KEY')
+        if not api_key:
+            raise ValueError("LITELLM_VIRTUAL_KEY environment variable not set")
+        
+        model = ChatOpenAI(
+            api_key=SecretStr(api_key),
+            model=os_module.getenv('LITELLM_MODEL', 'gpt-4'),
+            base_url=os_module.getenv('LITELLM_API'),
+            temperature=1.0,  # For reasoning models
+        )
+        
+        # Call LLM with system + user message
+        response = model.invoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
+        
+        # Extract response text (ChatOpenAI returns string content directly)
+        response_text = response.content
+        
+        if not response_text or not isinstance(response_text, str):
+            raise ValueError("No valid response from LLM")
+        
+        # Extract JSON from response
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            analysis_result = json.loads(json_match.group(0))
+            
+            # Transform to expected format
+            decisions = {}
+            reasoning = {}
+            confidence = {}
+            
+            for entity, details in analysis_result.items():
+                decisions[entity] = details.get("decision", "create")
+                reasoning[entity] = details.get("reasoning", "No reasoning provided")
+                confidence[entity] = details.get("confidence", 0.5)
+            
+            print("  ✓ [Task 6] Entity impact analysis complete:")
+            for entity in request_entities:
+                decision = decisions.get(entity, "create")
+                conf = confidence.get(entity, 0.5)
+                print(f"    - {entity}: {decision.upper()} (confidence: {conf:.2f})")
+            
+            return {
+                "decisions": decisions,
+                "reasoning": reasoning,
+                "confidence": confidence
+            }
+        else:
+            print("  ⚠ [Task 6] Could not parse JSON from LLM response, using fallback")
+            # Fallback: Return safe defaults
+            return {
+                "decisions": {entity: "create" for entity in request_entities},
+                "reasoning": {entity: "Could not parse LLM analysis" for entity in request_entities},
+                "confidence": {entity: 0.3 for entity in request_entities}
+            }
+    
+    except Exception as e:
+        print(f"  ❌ [Task 6] Entity impact analysis failed: {e}")
+        print("  ⚠ Using fallback: categorize all as CREATE")
+        # Fallback to safe default
+        return {
+            "decisions": {entity: "create" for entity in request_entities},
+            "reasoning": {entity: f"Analysis error: {str(e)}" for entity in request_entities},
+            "confidence": {entity: 0.2 for entity in request_entities}
+        }
+
+
 def plan_files_with_subagent(
     feature_request: str,
     detected_entities: List[str],
     framework: str,
     context_analysis: str = "",
     project_spec: Optional[ProjectSpec] = None,
-    subagent_model: Any = None
+    subagent_model: Any = None,
+    entities_to_extend: Optional[List[str]] = None,  # NEW: Task 5
+    entities_to_create: Optional[List[str]] = None,  # NEW: Task 5
+    existing_entities: Optional[Dict[str, Any]] = None  # NEW: Task 5
 ) -> NewFilesPlanningSuggestion:
     """
     Use subagent to dynamically plan file structure instead of hardcoded logic.
+    
+    TASK 5 UPDATE: Entity-Aware Planning
+    - Handles MODIFICATION workflow for entities_to_extend
+    - Handles CREATION workflow for entities_to_create
+    - Generates file modification patches for existing entities
+    - Generates file creation specs for new entities
 
     Args:
         feature_request: The feature specification
@@ -1865,6 +2245,9 @@ def plan_files_with_subagent(
         context_analysis: Codebase context
         project_spec: Project specifications
         subagent_model: LLM model for subagent
+        entities_to_extend: Entities that already exist (modification workflow)
+        entities_to_create: New entities (creation workflow)
+        existing_entities: Full entity discovery data from Phase 1
 
     Returns:
         Dynamic file planning based on framework reasoning
@@ -1872,6 +2255,30 @@ def plan_files_with_subagent(
     if not subagent_model:
         # Fallback to basic structure if no model
         return _create_basic_file_structure(detected_entities, framework)
+    
+    # Prepare entity categorization info for prompt
+    if entities_to_extend is None:
+        entities_to_extend = []
+    if entities_to_create is None:
+        entities_to_create = []
+    
+    # Build entity context for prompt
+    entity_context = ""
+    if entities_to_extend:
+        entity_context += "\n**ENTITIES TO EXTEND (Modify Existing Files):**\n"
+        for entity in entities_to_extend:
+            if existing_entities and entity in existing_entities.get("entity_details", {}):
+                details = existing_entities["entity_details"][entity]
+                file_path = details.get("file_path", "unknown")
+                fields = details.get("fields", [])
+                field_names = [f["name"] for f in fields] if fields else []
+                entity_context += f"- {entity}: {file_path} (existing fields: {', '.join(field_names)})\n"
+            else:
+                entity_context += f"- {entity} (existing entity, location unknown)\n"
+    
+    if entities_to_create:
+        entity_context += "\n**ENTITIES TO CREATE (New Files):**\n"
+        entity_context += f"- {', '.join(entities_to_create)}\n"
 
     try:
         # Create framework planner subagent
@@ -1887,12 +2294,27 @@ FEATURE REQUEST:
 
 DETECTED ENTITIES: {', '.join(detected_entities)}
 
+{entity_context}
+
 CONTEXT ANALYSIS:
 {context_analysis}
 
 PROJECT SPECIFICATIONS:
 {project_spec.framework if project_spec else 'Not specified'}
 {chr(10).join(project_spec.architecture_notes) if project_spec and project_spec.architecture_notes else ''}
+
+CRITICAL INSTRUCTIONS FOR ENTITY-AWARE PLANNING:
+
+1. **For ENTITIES TO EXTEND**: Generate MODIFICATION plans, NOT new files
+   - Identify existing file locations
+   - Plan field additions or modifications to existing entities
+   - Generate update patches for Service/Controller/Repository layers
+   - Example: Add "stock" field to existing Product.java, not create Inventory.java
+
+2. **For ENTITIES TO CREATE**: Generate CREATION plans for new files
+   - Create complete new entity with all layers (Entity/Service/Controller/Repository)
+   - Follow {framework} framework conventions
+   - Apply SOLID principles
 
 Based on the {framework} framework conventions, create a detailed file planning that includes:
 
@@ -2069,11 +2491,18 @@ def _create_basic_file_structure(
 
     # Basic structure for any framework
     for entity in detected_entities:
+        # Detect if it's a Java-based framework (Spring Boot, etc.)
+        is_java_framework = (
+            "java" in framework.lower() or 
+            "spring" in framework.lower() or
+            "SPRING_BOOT" in str(framework)
+        )
+        
         # Model/Entity
         suggested_files.append(FilePlacementSuggestion(
             file_type="entity",
-            relative_path="src/main/java/com/example/model" if "java" in framework.lower() else "models",
-            filename=f"{entity}.java" if "java" in framework.lower() else f"{entity}.py",
+            relative_path="src/main/java/com/example/model" if is_java_framework else "models",
+            filename=f"{entity}.java" if is_java_framework else f"{entity}.py",
             purpose=f"Domain entity for {entity}",
             solid_principles=["SRP"],
             example_class_name=entity,
@@ -2083,8 +2512,8 @@ def _create_basic_file_structure(
         # Service
         suggested_files.append(FilePlacementSuggestion(
             file_type="service",
-            relative_path="src/main/java/com/example/service" if "java" in framework.lower() else "services",
-            filename=f"{entity}Service.java" if "java" in framework.lower() else f"{entity}_service.py",
+            relative_path="src/main/java/com/example/service" if is_java_framework else "services",
+            filename=f"{entity}Service.java" if is_java_framework else f"{entity}_service.py",
             purpose=f"Business logic for {entity}",
             solid_principles=["SRP", "DIP"],
             example_class_name=f"{entity}Service",
@@ -2111,8 +2540,10 @@ def flow_parse_intent(
     """
     Phase 2: Parse Intent - Analyze feature request and create implementation plan.
     
+    TASK 9 UPDATE: Extract existing_entities from state (passed from Phase 1)
+    
     Args:
-        state: Current workflow state
+        state: Current workflow state (includes existing_entities from Phase 1)
         analysis_model: LLM model instance for analysis
         framework_detector: Function to detect project framework
         
@@ -2124,6 +2555,13 @@ def flow_parse_intent(
     codebase_path = state.get("codebase_path")
     context_analysis = state.get("context_analysis", "")
     full_analysis = state.get("full_analysis", {})  # ✓ GET FULL ANALYSIS FROM PHASE 1
+    existing_entities = state.get("existing_entities", None)  # NEW: Task 9 - get discovered entities
+    
+    # Log entity discovery status
+    if existing_entities and existing_entities.get("entities"):
+        print(f"  ✓ [Task 9] Received {len(existing_entities['entities'])} existing entities from Phase 1")
+    else:
+        print("  ℹ️  No existing entities discovered in Phase 1")
     
     # Validation
     if not feature_request:
@@ -2439,11 +2877,28 @@ def flow_parse_intent(
     print("\n  📋 Step 3: Planning new files for implementation...")
     new_files_planning = None
     new_files = []
+    entity_categorization = {'entities_to_extend': [], 'entities_to_create': []}
+    
+    # NEW: Extract entity categorization early (Task 5)
+    if existing_entities and feature_request:
+        try:
+            spec_entities = extract_entities_from_spec(
+                feature_request,
+                analysis_model=analysis_model,
+                existing_entities=existing_entities
+            )
+            entity_categorization = {
+                'entities_to_extend': spec_entities.get('entities_to_extend', []),
+                'entities_to_create': spec_entities.get('entities_to_create', [])
+            }
+        except Exception as e:
+            print(f"    ⚠️ Entity categorization failed: {e}")
     
     if detected_entities or deep_analysis_result:
         try:
             print(f"    🤖 Inferring new files for {len(detected_entities)} detected entities...")
             # Pass analysis_model as subagent_model so it can generate framework-specific files
+            # TASK 9: Pass existing_entities to enable entity-aware planning
             new_files_planning = infer_new_files_needed(
                 feature_request=feature_request,
                 context_analysis=context_analysis,
@@ -2451,7 +2906,8 @@ def flow_parse_intent(
                 affected_files=affected_files,
                 llm_response=response_text,
                 project_spec=project_spec,
-                analysis_model=analysis_model  # ✓ Pass the model for subagent planning
+                analysis_model=analysis_model,  # ✓ Pass the model for subagent planning
+                existing_entities=existing_entities  # NEW: Task 9 - enable entity comparison
             )
             
             if new_files_planning and new_files_planning.suggested_files:
@@ -2518,6 +2974,9 @@ def flow_parse_intent(
     # Set the feature spec in state
     state["feature_spec"] = spec
     
+    # NEW: Store entity categorization from extraction above (Task 5)
+    state["entity_categorization"] = entity_categorization
+    
     # Set current phase
     state["current_phase"] = "intent_parsed"
     
@@ -2531,12 +2990,18 @@ def infer_new_files_needed(
     affected_files: List[str],
     llm_response: Optional[str] = None,
     project_spec: Optional[ProjectSpec] = None,
-    analysis_model: Optional[Any] = None
+    analysis_model: Optional[Any] = None,
+    existing_entities: Optional[Dict[str, Any]] = None  # NEW: Task 4 - existing entities from Phase 1
 ) -> NewFilesPlanningSuggestion:
     """
     Infer what new files need to be created for a feature based on the request and framework.
     Uses LLM domain reasoning to identify entities dynamically instead of hardcoded keywords.
     Performs deep spec reasoning to identify ALL features mentioned.
+    
+    TASK 4-5 IMPLEMENTATION: Entity-Aware File Planning
+    - Accepts existing_entities from Phase 1 discovery
+    - Passes to extract_entities_from_spec for entity comparison
+    - Plans both modification workflow (extend) and creation workflow (new)
     
     Args:
         feature_request: The feature request text
@@ -2545,6 +3010,7 @@ def infer_new_files_needed(
         affected_files: Files that will be affected
         llm_response: LLM response containing domain analysis and entity identification
         project_spec: Project specification loaded from markdown files
+        existing_entities: Dictionary from discover_existing_entities() (Phase 1)
         
     Returns:
         NewFilesPlanningSuggestion with detailed file planning
@@ -2555,10 +3021,53 @@ def infer_new_files_needed(
     request_lower = feature_request.lower()
     
     # Deep spec reasoning: extract ALL entities mentioned in the spec
-    spec_entities = extract_entities_from_spec(feature_request)
+    # TASK 4: Pass existing_entities to enable entity comparison
+    spec_entities = extract_entities_from_spec(
+        feature_request, 
+        analysis_model=analysis_model,
+        existing_entities=existing_entities
+    )
     
     # Use spec-based entities as primary source (deep reasoning from spec)
     detected_entities = spec_entities['entities']
+    entities_to_extend = spec_entities.get('entities_to_extend', [])  # NEW: Task 5
+    entities_to_create = spec_entities.get('entities_to_create', [])  # NEW: Task 5
+    
+    # Log entity categorization for debugging
+    if entities_to_extend or entities_to_create:
+        print("\n  📊 [Task 5] Entity categorization:")
+        if entities_to_extend:
+            print(f"    🔧 Entities to EXTEND (modify existing): {', '.join(entities_to_extend)}")
+        if entities_to_create:
+            print(f"    ⊕ Entities to CREATE (new files): {', '.join(entities_to_create)}")
+    
+    # ============================================================================
+    # TASK 6: Deep entity impact analysis for complex cases
+    # ============================================================================
+    # For entities that need deeper analysis (ambiguous cases), use LLM reasoning
+    # to make intelligent extend vs create decisions
+    if detected_entities and existing_entities and existing_entities.get("entities"):
+        try:
+            impact_analysis = analyze_entity_impact(
+                request_entities=detected_entities,
+                existing_entities=existing_entities,
+                feature_request=feature_request,
+                analysis_model=analysis_model
+            )
+            
+            # Optionally refine categorization based on deep analysis
+            # (For now, we trust Task 4's simple comparison, but Task 6 provides
+            # additional reasoning that could override in complex cases)
+            if impact_analysis and "decisions" in impact_analysis:
+                print("\n  🎯 [Task 6] Deep analysis recommendations:")
+                for entity, decision in impact_analysis["decisions"].items():
+                    reasoning = impact_analysis.get("reasoning", {}).get(entity, "")
+                    confidence = impact_analysis.get("confidence", {}).get(entity, 0.5)
+                    print(f"    - {entity}: {decision.upper()} (confidence: {confidence:.2f})")
+                    if reasoning:
+                        print(f"      Reason: {reasoning[:100]}...")
+        except Exception as e:
+            print(f"  ⚠ [Task 6] Deep analysis failed, continuing with Task 4 categorization: {e}")
     
     # If spec reasoning found entities, use them; otherwise fallback to LLM or keyword extraction
     if not detected_entities:
@@ -2663,13 +3172,17 @@ def infer_new_files_needed(
     try:
         print("  🤖 Using subagent for dynamic framework planning (context isolation)...")
         framework_str = str(framework) if framework else "Generic"
+        # TASK 5: Pass entity categorization to enable modification vs creation workflows
         return plan_files_with_subagent(
             feature_request=feature_request,
             detected_entities=detected_entities,
             framework=framework_str,
             context_analysis=context_analysis,
             project_spec=project_spec,
-            subagent_model=analysis_model  # ✓ Pass the LLM model for framework-specific planning
+            subagent_model=analysis_model,  # ✓ Pass the LLM model for framework-specific planning
+            entities_to_extend=spec_entities.get('entities_to_extend', []),  # NEW: Task 5
+            entities_to_create=spec_entities.get('entities_to_create', []),  # NEW: Task 5
+            existing_entities=existing_entities  # NEW: Task 5
         )
     except Exception as e:
         print(f"  ⚠️  Subagent planning failed: {e}")

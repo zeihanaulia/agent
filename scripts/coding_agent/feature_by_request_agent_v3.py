@@ -112,6 +112,9 @@ class AgentState(TypedDict):
     framework: Optional[Any]  # Can be FrameworkType enum or str or None
     run_sandbox_test: bool  # NEW: Flag to enable sandbox testing
     max_sandbox_iterations: int  # NEW: Max iterations for sandbox fixes
+    # NEW: Entity-aware workflow support
+    existing_entities: Optional[Dict[str, Any]]  # From discover_existing_entities() in Phase 1
+    entity_categorization: Optional[Dict[str, Any]]  # From extract_entities_from_spec() in Phase 2
 
 # ==============================================================================
 # GLOBAL VARIABLES (initialized in main)
@@ -233,7 +236,7 @@ def analyze_context(state: AgentState) -> AgentState:
 
     try:
         print("  📊 Using Aider-style repository analyzer...")
-        analyzer = AiderStyleRepoAnalyzer(codebase_path, max_tokens=2048)
+        analyzer = AiderStyleRepoAnalyzer(codebase_path, max_tokens=50000)  # Increased from 2048 to 50k
         analysis_result = analyzer.analyze_codebase()
 
         basic = analysis_result["basic_info"]
@@ -257,9 +260,9 @@ CODE ANALYSIS:
 - References: {len(code_analysis['references'])}
 
 PROJECT STRUCTURE:
-- Entry Points: {', '.join(structure['entry_points']) if structure['entry_points'] else 'None detected'}
-- Test Directories: {len(structure['test_directories'])}
-- Source Directories: {len(structure['source_directories'])}
+- Entry Points: {', '.join(structure.get('entry_points', [])) if structure.get('entry_points') else 'None detected'}
+- Test Directories: {len(structure.get('test_directories', []))}
+- Source Directories: {len(structure.get('source_directories', []))}
 
 ARCHITECTURE INSIGHTS:
 1. **Application Type**: {infer_app_type(basic, structure)}
@@ -270,6 +273,36 @@ ARCHITECTURE INSIGHTS:
         state["full_analysis"] = analysis_result  # ✓ STORE FULL ANALYSIS OBJECT
         state["context_analysis"] = summary  # Keep for display/backward compatibility
         state["current_phase"] = "context_analysis_complete"
+        
+        # ✅ TASK 2: Discover existing entities (entity-aware architecture)
+        print("\n🔍 [Task 2] Running entity discovery...")
+        from flow_analyze_context import discover_existing_entities
+        
+        project_type = basic.get('project_type', 'Unknown')
+        
+        # Determine language based on project type (auto-detect if unknown)
+        if "java" in project_type.lower() or "spring" in basic.get('framework', '').lower():
+            language = "java"
+        elif "python" in project_type.lower():
+            language = "python"
+        elif "go" in project_type.lower():
+            language = "go"
+        elif "javascript" in project_type.lower():
+            language = "javascript"
+        elif "typescript" in project_type.lower():
+            language = "typescript"
+        else:
+            language = "auto"  # Auto-detect
+        
+        # Discover existing entities
+        entity_discovery = discover_existing_entities(
+            codebase_path, 
+            language=language,
+            main_model=None  # Use default LLM setup
+        )
+        
+        # Add entity discovery results to state
+        state["existing_entities"] = entity_discovery
         
         print("  ✓ Analysis complete")
         print("  ✓ Context saved for next phases")
@@ -292,6 +325,7 @@ def parse_intent(state: AgentState) -> AgentState:
     codebase_path = state["codebase_path"]
     context_analysis = state.get("context_analysis", "")
     full_analysis = state.get("full_analysis", {})  # ✓ GET FULL ANALYSIS FROM PHASE 1
+    existing_entities = state.get("existing_entities", {})  # ✓ GET ENTITY DISCOVERY FROM PHASE 1
 
     if not feature_request:
         state["errors"].append("No feature request provided")
@@ -304,6 +338,7 @@ def parse_intent(state: AgentState) -> AgentState:
             "feature_request": feature_request,
             "context_analysis": context_analysis,
             "full_analysis": full_analysis,  # ✓ PASS FULL ANALYSIS TO PHASE 2
+            "existing_entities": existing_entities,  # ✓ PASS ENTITY DISCOVERY TO PHASE 2
             "framework": None,
             "feature_spec": None,
             "errors": []
@@ -320,6 +355,10 @@ def parse_intent(state: AgentState) -> AgentState:
         feature_spec = result_state.get("feature_spec")
         detected_framework = result_state.get("framework")
         errors = result_state.get("errors", [])
+        
+        # NEW: Extract entity-aware data for next flows
+        entity_categorization = result_state.get("entity_categorization", {})
+        existing_entities = result_state.get("existing_entities", {})
         
         if errors:
             state["errors"].extend(errors)
@@ -342,12 +381,27 @@ def parse_intent(state: AgentState) -> AgentState:
             state["framework"] = detected_framework
             state["current_phase"] = "intent_parsing_complete"
             
+            # NEW: Pass entity-aware data to next flows for entity extension workflow
+            state["entity_categorization"] = entity_categorization
+            state["existing_entities"] = existing_entities
+            
             # Print results
             print(f"  ✓ Feature: {spec.feature_name[:50]}...")
             print(f"  ✓ Affected files: {len(spec.affected_files)} file(s)")
             print(f"  ✓ New files planned: {len(spec.new_files)} file(s)")
             if feature_spec.todo_list:
                 print(f"  ✓ Todo items: {feature_spec.todo_list.total_tasks} items ({feature_spec.todo_list.completed_tasks} completed)")
+            
+            # NEW: Print entity-aware information
+            if entity_categorization:
+                entities_to_extend = entity_categorization.get('entities_to_extend', [])
+                entities_to_create = entity_categorization.get('entities_to_create', [])
+                print(f"  ✓ Entities to extend: {len(entities_to_extend)} (modify existing)")
+                print(f"  ✓ Entities to create: {len(entities_to_create)} (new files)")
+                if entities_to_extend:
+                    print(f"    → Extend: {', '.join(entities_to_extend[:3])}")
+                if entities_to_create:
+                    print(f"    → Create: {', '.join(entities_to_create[:3])}")
         else:
             state["errors"].append("Failed to create feature spec from intent parsing")
             
@@ -668,7 +722,10 @@ def main():
             "human_approval_required": False,
             "framework": None,
             "run_sandbox_test": getattr(args, 'sandbox', False),  # NEW: Enable sandbox if --sandbox flag
-            "max_sandbox_iterations": getattr(args, 'max_iteration', 10)  # NEW: Max iterations from args
+            "max_sandbox_iterations": getattr(args, 'max_iteration', 10),  # NEW: Max iterations from args
+            # NEW: Entity-aware workflow support
+            "existing_entities": None,  # Will be populated by discover_existing_entities() in Phase 1
+            "entity_categorization": None  # Will be populated by extract_entities_from_spec() in Phase 2
         }
 
         # Execute workflow

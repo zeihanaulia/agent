@@ -1838,6 +1838,362 @@ CRITICAL: Use only discovered packages, never suggest com/example if not found."
 
 
 # ============================================================================
+# ENTITY DISCOVERY FUNCTIONS (Task 2: Entity-Aware Architecture)
+# ============================================================================
+
+def discover_existing_entities(
+    codebase_path: str, 
+    language: str = "auto",
+    main_model: Optional[Any] = None
+) -> Dict[str, Any]:
+    """
+    Task 2: Discover existing domain entities in the codebase using DeepAgent reasoning.
+    
+    USES DEEPAGENT PATTERN:
+    - LLM-based entity extraction (not regex)
+    - Multi-language support (Java, Python, Go, TypeScript, etc.)
+    - Context injection: passes file contents to LLM for intelligent parsing
+    - Reasoning about what constitutes an "entity" vs regular class
+    
+    This function scans the codebase to find existing entity classes (JPA entities, domain models,
+    dataclasses, structs, etc.) to prevent duplicate entity creation and enable modification-based workflows.
+    
+    Args:
+        codebase_path: Root path of the project
+        language: Programming language ("auto", "java", "python", "go", "typescript")
+        main_model: LLM model for reasoning (if None, uses regex fallback)
+    
+    Returns:
+        Dictionary containing:
+        - entities: List of discovered entity names
+        - entity_files: Mapping of entity name to file path
+        - entity_details: Detailed information about each entity (fields, annotations, etc.)
+        - discovery_method: "llm_reasoning" or "regex_fallback"
+    """
+    print(f"  🔍 [Task 2] Discovering existing entities in {codebase_path}...")
+    
+    result = {
+        "entities": [],
+        "entity_files": {},
+        "entity_details": {},
+        "language": language,
+        "discovery_method": "llm_reasoning" if main_model else "regex_fallback"
+    }
+    
+    codebase_root = Path(codebase_path)
+    
+    # Auto-detect language if needed
+    if language == "auto":
+        language = _detect_project_language(codebase_root)
+        print(f"    🔍 Auto-detected language: {language}")
+    
+    # Find potential entity files based on language
+    entity_candidates = _find_entity_candidate_files(codebase_root, language)
+    
+    if not entity_candidates:
+        print(f"    ⚠️ No entity candidate files found for language: {language}")
+        return result
+    
+    print(f"    📁 Found {len(entity_candidates)} potential entity files")
+    
+    # Use LLM reasoning if available, otherwise fallback to regex
+    if main_model and LLM_AVAILABLE:
+        print(f"    🤖 Using LLM reasoning for entity extraction...")
+        result = _discover_entities_with_llm(
+            entity_candidates, 
+            codebase_root, 
+            language, 
+            main_model
+        )
+    else:
+        print(f"    📝 Using regex fallback for entity extraction...")
+        result = _discover_entities_with_regex(
+            entity_candidates, 
+            codebase_root, 
+            language
+        )
+    
+    print(f"  ✓ Entity discovery complete: {len(result['entities'])} entities found ({result['discovery_method']})")
+    return result
+
+
+def _detect_project_language(codebase_root: Path) -> str:
+    """Auto-detect project language from codebase structure"""
+    # Check for language-specific markers
+    if (codebase_root / "pom.xml").exists() or (codebase_root / "build.gradle").exists():
+        return "java"
+    elif (codebase_root / "requirements.txt").exists() or (codebase_root / "setup.py").exists():
+        return "python"
+    elif (codebase_root / "go.mod").exists() or (codebase_root / "main.go").exists():
+        return "go"
+    elif (codebase_root / "package.json").exists():
+        # Check if TypeScript
+        if (codebase_root / "tsconfig.json").exists():
+            return "typescript"
+        return "javascript"
+    elif (codebase_root / "Cargo.toml").exists():
+        return "rust"
+    
+    return "unknown"
+
+
+def _find_entity_candidate_files(codebase_root: Path, language: str) -> list:
+    """Find files that might contain entity definitions"""
+    candidates = []
+    
+    if language == "java":
+        # Java: domain/, entity/, model/ directories
+        java_src = codebase_root / "src" / "main" / "java"
+        if java_src.exists():
+            patterns = ["**/domain/*.java", "**/entity/*.java", "**/model/*.java", "**/entities/*.java"]
+            for pattern in patterns:
+                candidates.extend(java_src.glob(pattern))
+    
+    elif language == "python":
+        # Python: models.py, entities.py, domain/ directory
+        patterns = ["**/models.py", "**/entities.py", "**/entity.py", "**/domain/*.py", "**/models/*.py"]
+        for pattern in patterns:
+            candidates.extend(codebase_root.glob(pattern))
+    
+    elif language == "go":
+        # Go: entity.go, model.go, types.go in various directories
+        patterns = ["**/entity.go", "**/model.go", "**/models.go", "**/types.go", "**/domain/*.go"]
+        for pattern in patterns:
+            candidates.extend(codebase_root.glob(pattern))
+    
+    elif language in ["typescript", "javascript"]:
+        # TypeScript/JavaScript: entity.ts, model.ts, types.ts
+        ext = "ts" if language == "typescript" else "js"
+        patterns = [f"**/entity.{ext}", f"**/model.{ext}", f"**/models.{ext}", f"**/types.{ext}", f"**/entities/*.{ext}"]
+        for pattern in patterns:
+            candidates.extend(codebase_root.glob(pattern))
+    
+    elif language == "rust":
+        # Rust: look for structs in src/ directory
+        patterns = ["**/src/*.rs", "**/src/**/*.rs"]
+        for pattern in patterns:
+            candidates.extend(codebase_root.glob(pattern))
+    
+    return list(set(candidates))  # Remove duplicates
+
+
+def _discover_entities_with_llm(
+    candidate_files: list,
+    codebase_root: Path,
+    language: str,
+    main_model: Any
+) -> Dict[str, Any]:
+    """
+    Use LLM reasoning to extract entities from candidate files.
+    
+    DEEPAGENT PATTERN: Context injection with file contents for intelligent entity detection.
+    """
+    result = {
+        "entities": [],
+        "entity_files": {},
+        "entity_details": {},
+        "language": language,
+        "discovery_method": "llm_reasoning"
+    }
+    
+    for file_path in candidate_files[:20]:  # Limit to avoid token overflow
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Skip if file is too large (>10KB)
+            if len(content) > 10000:
+                continue
+            
+            # Build prompt for entity extraction
+            prompt = f"""Analyze this {language} code file and extract domain entity information.
+
+FILE: {file_path.name}
+LANGUAGE: {language}
+
+CODE:
+```{language}
+{content}
+```
+
+Task: Identify if this file contains domain entities (JPA entities, dataclasses, domain models, etc.).
+
+For EACH entity found, extract:
+1. Entity name (class/struct name)
+2. All fields with their types
+3. Annotations/decorators (e.g., @Entity, @dataclass, #[derive])
+4. Package/module name
+
+Return JSON format:
+{{
+  "has_entities": true/false,
+  "entities": [
+    {{
+      "name": "Product",
+      "package": "com.example.product.domain",
+      "fields": [
+        {{"name": "id", "type": "Long", "annotations": ["@Id", "@GeneratedValue"]}},
+        {{"name": "name", "type": "String", "annotations": ["@Column"]}}
+      ],
+      "class_annotations": ["@Entity", "@Table(name=\\"products\\")"]
+    }}
+  ]
+}}
+
+IMPORTANT: Only extract classes that represent domain entities (business objects), not DTOs, controllers, or utilities."""
+
+            # Call LLM
+            try:
+                from langchain_openai import ChatOpenAI
+                from pydantic import SecretStr
+                import os
+                
+                llm = ChatOpenAI(
+                    api_key=SecretStr(os.getenv('LITELLM_VIRTUAL_KEY')),
+                    model=os.getenv('LITELLM_MODEL', 'gpt-4'),
+                    base_url=os.getenv('LITELLM_API'),
+                    temperature=0.0,  # Deterministic for entity extraction
+                )
+                
+                response = llm.invoke([{"role": "user", "content": prompt}])
+                response_text = response.content
+                
+                # Parse JSON response
+                import json
+                import re
+                
+                # Extract JSON from response (handle markdown code blocks)
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                else:
+                    json_str = response_text
+                
+                entity_data = json.loads(json_str)
+                
+                if entity_data.get("has_entities") and entity_data.get("entities"):
+                    for entity in entity_data["entities"]:
+                        entity_name = entity["name"]
+                        relative_path = file_path.relative_to(codebase_root)
+                        
+                        result["entities"].append(entity_name)
+                        result["entity_files"][entity_name] = str(relative_path)
+                        result["entity_details"][entity_name] = {
+                            "fields": entity.get("fields", []),
+                            "class_annotations": entity.get("class_annotations", []),
+                            "package": entity.get("package", "unknown"),
+                            "file_path": str(relative_path)
+                        }
+                        
+                        print(f"    ✅ Discovered entity: {entity_name} ({len(entity.get('fields', []))} fields)")
+            
+            except Exception as e:
+                print(f"    ⚠️ LLM parsing failed for {file_path.name}: {e}")
+                # Fall back to regex for this file
+                continue
+        
+        except Exception as e:
+            print(f"    ⚠️ Error reading {file_path}: {e}")
+            continue
+    
+    return result
+
+
+def _discover_entities_with_regex(
+    candidate_files: list,
+    codebase_root: Path,
+    language: str
+) -> Dict[str, Any]:
+    """
+    Fallback: Use regex-based entity extraction (Java only for now).
+    
+    This is a simple fallback when LLM is not available.
+    """
+    result = {
+        "entities": [],
+        "entity_files": {},
+        "entity_details": {},
+        "language": language,
+        "discovery_method": "regex_fallback"
+    }
+    
+    if language != "java":
+        print(f"    ⚠️ Regex fallback only supports Java. Language '{language}' not supported.")
+        return result
+    
+    import re
+    
+    for file_path in candidate_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Check for JPA @Entity annotation
+            if '@Entity' not in content:
+                continue
+            
+            # Extract entity name from class declaration
+            class_match = re.search(r'public\s+class\s+(\w+)\s*\{', content)
+            if not class_match:
+                continue
+            
+            entity_name = class_match.group(1)
+            
+            # Extract package
+            package_match = re.search(r'package\s+([\w.]+);', content)
+            package_name = package_match.group(1) if package_match else "unknown"
+            
+            # Extract fields
+            fields = []
+            field_pattern = re.compile(
+                r'(?:(?:@\w+(?:\([^)]*\))?)\s*)*\s*private\s+(\w+(?:<[\w\s,<>]+>)?)\s+(\w+)\s*;',
+                re.MULTILINE
+            )
+            
+            for match in field_pattern.finditer(content):
+                field_type = match.group(1)
+                field_name = match.group(2)
+                
+                # Extract annotations
+                field_start = match.start()
+                context_start = max(0, field_start - 200)
+                field_context = content[context_start:field_start]
+                
+                annotation_pattern = re.compile(r'@(\w+)(?:\([^)]*\))?')
+                annotations = ['@' + ann for ann in annotation_pattern.findall(field_context)]
+                
+                fields.append({
+                    "name": field_name,
+                    "type": field_type,
+                    "annotations": annotations if annotations else []
+                })
+            
+            # Extract class annotations
+            class_start = content.find('public class')
+            class_context = content[:class_start] if class_start > 0 else ""
+            class_annotations = ['@' + ann for ann in re.findall(r'@(\w+)(?:\([^)]*\))?', class_context)]
+            
+            # Store entity details
+            relative_path = file_path.relative_to(codebase_root)
+            result["entities"].append(entity_name)
+            result["entity_files"][entity_name] = str(relative_path)
+            result["entity_details"][entity_name] = {
+                "fields": fields,
+                "class_annotations": class_annotations,
+                "package": package_name,
+                "file_path": str(relative_path)
+            }
+            
+            print(f"    ✅ Discovered entity: {entity_name} ({len(fields)} fields)")
+        
+        except Exception as e:
+            print(f"    ⚠️ Error parsing {file_path}: {e}")
+            continue
+    
+    return result
+
+
+# ============================================================================
 # MAIN WORKFLOW FUNCTIONS
 # ============================================================================
 
@@ -1928,6 +2284,50 @@ PERFORMANCE METRICS:
         except Exception as e:
             print(f"  ⚠️ Failed to save JSON results: {e}")
 
+        # ✅ TASK 2: Discover existing entities (entity-aware architecture)
+        print("\n🔍 [Task 2] Running entity discovery...")
+        project_type = basic.get('project_type', 'Unknown')
+        
+        # Determine language based on project type (auto-detect if unknown)
+        if "java" in project_type.lower() or "spring" in basic.get('framework', '').lower():
+            language = "java"
+        elif "python" in project_type.lower():
+            language = "python"
+        elif "go" in project_type.lower():
+            language = "go"
+        elif "javascript" in project_type.lower() or "node" in basic.get('framework', '').lower():
+            language = "javascript"
+        elif "typescript" in project_type.lower():
+            language = "typescript"
+        else:
+            language = "auto"  # Auto-detect
+        
+        # Pass analyzer's model for LLM reasoning (DeepAgent pattern)
+        entity_discovery = discover_existing_entities(
+            codebase_path, 
+            language=language,
+            main_model=analyzer.main_model if hasattr(analyzer, 'main_model') else None
+        )
+        
+        # Add entity discovery results to state
+        state["existing_entities"] = entity_discovery
+        
+        # Append entity discovery to summary
+        if entity_discovery.get("entities"):
+            entity_summary = f"\nENTITY DISCOVERY (Task 2):\n"
+            entity_summary += f"- Discovered Entities: {len(entity_discovery['entities'])}\n"
+            entity_summary += f"- Entities: {', '.join(entity_discovery['entities'])}\n"
+            
+            # Show sample entity details
+            for entity_name in entity_discovery['entities'][:3]:  # Show up to 3 entities
+                details = entity_discovery['entity_details'].get(entity_name, {})
+                fields_count = len(details.get('fields', []))
+                entity_summary += f"  • {entity_name}: {fields_count} fields ({details.get('package', 'unknown')})\n"
+            
+            summary += entity_summary
+        else:
+            summary += f"\nENTITY DISCOVERY (Task 2):\n- No existing entities found (fresh codebase)\n"
+
         state["context_analysis"] = summary
         state["current_phase"] = "context_analysis_complete"
 
@@ -1936,6 +2336,7 @@ PERFORMANCE METRICS:
         print(f"  ✓ Selected files: {len(discovery.get('selected_files', []))}")
         print(f"  ✓ Code tags: {code_analysis.get('total_tags', 0)}")
         print(f"  ✓ Tokens used: {analysis_result.get('tokens_used', 0)}")
+        print(f"  ✓ Entities discovered: {len(entity_discovery.get('entities', []))}")
 
         return state
 
